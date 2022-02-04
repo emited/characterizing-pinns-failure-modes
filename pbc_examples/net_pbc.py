@@ -1,15 +1,27 @@
+import math
+
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from collections import OrderedDict
 import numpy as np
 from choose_optimizer import *
+from bacon import Bacon
 
 # CUDA support
 if torch.cuda.is_available():
     device = torch.device('cuda')
 else:
     device = torch.device('cpu')
+
+class Swish(nn.Module):
+
+    def __init__(self):
+        super(Swish, self).__init__()
+        self.beta = nn.Parameter(torch.tensor([0.5]))
+
+    def forward(self, x):
+        return (x * torch.sigmoid_(x * F.softplus(self.beta))).div_(1.1)
 
 # the deep neural network
 class DNN(torch.nn.Module):
@@ -28,7 +40,10 @@ class DNN(torch.nn.Module):
         elif activation == 'gelu':
             self.activation = torch.nn.GELU
         elif activation == 'sin':
-            self.activation = Sine
+            self.activation = torch.nn.SiLU
+        elif activation == 'swish':
+            self.activation = Swish
+            # self.activation = Sine
         self.use_batch_norm = use_batch_norm
         self.use_instance_norm = use_instance_norm
 
@@ -75,7 +90,9 @@ class PhysicsInformedNN_pbc():
         self.net = net
 
         if self.net == 'DNN':
-            self.dnn = DNN(layers, activation).to(device)
+            # self.dnn = DNN(layers, activation).to(device)
+            self.dnn = Bacon(coord_dim=2, dout=1, dh=64, nblocks=6,).to(device)
+            # self.vel = DNN(layers[:-1] + [1] , activation).to(device)
         else: # "pretrained" can be included in model path
             # the dnn is within the PINNs class
             self.dnn = torch.load(net).dnn
@@ -99,9 +116,13 @@ class PhysicsInformedNN_pbc():
         self.loss_style = loss_style
 
         self.iter = 0
+        self.dnn.iter = self.iter
 
     def net_u(self, x, t):
         """The standard DNN that takes (x,t) --> u."""
+        # print(self.vel(torch.cat([x, t], dim=1)).shape, self.dnn(torch.cat([x, t], dim=1)).shape)
+        # print(x.shape)
+        # x = x - 0.01* self.vel(torch.cat([x, t], dim=1))
         u = self.dnn(torch.cat([x, t], dim=1))
         return u
 
@@ -130,7 +151,10 @@ class PhysicsInformedNN_pbc():
             )[0]
 
         if 'convection' in self.system or 'diffusion' in self.system:
-            f = u_t - self.nu*u_xx + self.beta*u_x - self.G
+            if any(self.G != 0):
+                assert 'Neeeded to put back self.G'
+            # f = u_t - self.nu*u_xx + self.beta*u_x - self.G
+            f = u_t - self.nu*u_xx + self.beta*u_x
         elif 'rd' in self.system:
             f = u_t - self.nu*u_xx - self.rho*u + self.rho*u**2
         elif 'reaction' in self.system:
@@ -165,6 +189,11 @@ class PhysicsInformedNN_pbc():
         u_pred_ub = self.net_u(self.x_bc_ub, self.t_bc_ub)
         if self.nu != 0:
             u_pred_lb_x, u_pred_ub_x = self.net_b_derivatives(u_pred_lb, u_pred_ub, self.x_bc_lb, self.x_bc_ub)
+        # noise = .1 * torch.randn(self.t_f.shape, device=self.t_f.device)
+        # self.t_f += noise
+        # self.t_f = torch.tensor(np.random.uniform(0, 2*np.pi, size=self.t_f.shape), device=self.t_u.device, dtype=torch.float32)
+        # self.x_f = torch.tensor(np.random.uniform(0, 1, size=self.x_f.shape), device=self.x_u.device, dtype=torch.float32)
+        # self.x_f.requires_grad, self.t_f.requires_grad = True, True
         f_pred = self.net_f(self.x_f, self.t_f)
 
         if self.loss_style == 'mean':
@@ -172,7 +201,14 @@ class PhysicsInformedNN_pbc():
             loss_b = torch.mean((u_pred_lb - u_pred_ub) ** 2)
             if self.nu != 0:
                 loss_b += torch.mean((u_pred_lb_x - u_pred_ub_x) ** 2)
-            loss_f = torch.mean(f_pred ** 2)
+            # noise = .2 / math.pow(self.iter + 1, 0.2) * torch.randn(f_pred.shape, device=f_pred.device)
+            noise = 0
+            # print(self.iter, self.dnn.iter, 'hhhhhhh')
+            # f_pred[f_pred**2 < 1. / (math.pow(self.iter, 0.3) + 1) ] = 0
+            # print(f_pred.max().item())
+            # f_pred = 0.1 * f_pred / (f_pred.max() + 1e-7)
+            # print('cutoff', 1. / (math.pow(self.iter, 0.3) + 1))
+            loss_f = torch.mean((f_pred + noise)** 2)
         elif self.loss_style == 'sum':
             loss_u = torch.sum((self.u - u_pred) ** 2)
             loss_b = torch.sum((u_pred_lb - u_pred_ub) ** 2)
@@ -187,8 +223,9 @@ class PhysicsInformedNN_pbc():
 
         grad_norm = 0
         for p in self.dnn.parameters():
-            param_norm = p.grad.detach().data.norm(2)
-            grad_norm += param_norm.item() ** 2
+            if p.grad is not None:
+                param_norm = p.grad.detach().data.norm(2)
+                grad_norm += param_norm.item() ** 2
         grad_norm = grad_norm ** 0.5
 
         if verbose:
@@ -197,6 +234,7 @@ class PhysicsInformedNN_pbc():
                     'epoch %d, gradient: %.5e, loss: %.5e, loss_u: %.5e, loss_b: %.5e, loss_f: %.5e' % (self.iter, grad_norm, loss.item(), loss_u.item(), loss_b.item(), loss_f.item())
                 )
             self.iter += 1
+            self.dnn.iter = self.iter
 
         return loss
 
@@ -213,3 +251,13 @@ class PhysicsInformedNN_pbc():
         u = u.detach().cpu().numpy()
 
         return u
+
+    def predict_f(self, X):
+        x = torch.tensor(X[:, 0:1], requires_grad=True).float().to(device)
+        t = torch.tensor(X[:, 1:2], requires_grad=True).float().to(device)
+
+        self.dnn.eval()
+        f = self.net_f(x, t)
+        f = f.detach().cpu().numpy() ** 2
+
+        return f

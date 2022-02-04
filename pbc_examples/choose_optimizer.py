@@ -2,6 +2,8 @@
 
 import torch
 import torch_optimizer as optim
+# import .kfac
+from kfac import KFACOptimizer
 import numpy as np
 
 def choose_optimizer(optimizer_name: str, *params):
@@ -19,10 +21,12 @@ def choose_optimizer(optimizer_name: str, *params):
         return Adam(*params)
     elif optimizer_name == 'SGD':
         return SGD(*params)
+    elif optimizer_name == 'kfac':
+        return KFACOptimizer(*params)
 
 def LBFGS(model_param,
         lr=1.0,
-        max_iter=100000,
+        max_iter=1000,
         max_eval=None,
         history_size=50,
         tolerance_grad=1e-7,
@@ -42,7 +46,7 @@ def LBFGS(model_param,
 
     return optimizer
 
-def Adam(model_param, lr=1e-4, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False):
+def Adam(model_param, lr=1e-4, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.0, amsgrad=False):
 
     optimizer = torch.optim.Adam(
                 model_param,

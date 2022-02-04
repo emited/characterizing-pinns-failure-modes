@@ -33,7 +33,7 @@ def exact_u(Exact, x, t, nu, beta, rho, layers, N_f, L, source, u0_str, system, 
 
     ax.tick_params(labelsize=15)
 
-    plt.savefig(f"{path}/exactu_{system}_nu{nu}_beta{beta}_rho{rho}_Nf{N_f}_{layers}_L{L}_source{source}_{u0_str}.pdf")
+    plt.savefig(f"{path}/exactu_{system}_nu{nu}_beta{beta}_rho{rho}_Nf{N_f}_{layers}_L{L}_source{source}_{u0_str}.png")
     plt.close()
 
     return None
@@ -72,11 +72,11 @@ def u_diff(Exact, U_pred, x, t, nu, beta, rho, seed, layers, N_f, L, source, lr,
 
     ax.tick_params(labelsize=15)
 
-    plt.savefig(f"{path}/udiff_{system}_nu{nu}_beta{beta}_rho{rho}_Nf{N_f}_{layers}_L{L}_seed{seed}_source{source}_{u0_str}_lr{lr}.pdf")
+    plt.savefig(f"{path}/udiff_{system}_nu{nu}_beta{beta}_rho{rho}_Nf{N_f}_{layers}_L{L}_seed{seed}_source{source}_{u0_str}_lr{lr}.png")
 
     return None
 
-def u_predict(u_vals, U_pred, x, t, nu, beta, rho, seed, layers, N_f, L, source, lr, u0_str, system, path):
+def u_predict(u_vals, U_pred, x, t, nu, beta, rho, seed, layers, N_f, L, source, lr, u0_str, system, path, prefix=''):
     """Visualize u_predicted."""
 
     fig = plt.figure(figsize=(9, 5))
@@ -85,7 +85,7 @@ def u_predict(u_vals, U_pred, x, t, nu, beta, rho, seed, layers, N_f, L, source,
     # colorbar for prediction: set min/max to ground truth solution.
     h = ax.imshow(U_pred.T, interpolation='nearest', cmap='rainbow',
                   extent=[t.min(), t.max(), x.min(), x.max()],
-                  origin='lower', aspect='auto', vmin=u_vals.min(0), vmax=u_vals.max(0))
+                  origin='lower', aspect='auto', vmin=U_pred.min().item(), vmax=U_pred.max().item())
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.10)
     cbar = fig.colorbar(h, cax=cax)
@@ -105,8 +105,11 @@ def u_predict(u_vals, U_pred, x, t, nu, beta, rho, seed, layers, N_f, L, source,
     )
 
     ax.tick_params(labelsize=15)
-
-    plt.savefig(f"{path}/upredicted_{system}_nu{nu}_beta{beta}_rho{rho}_Nf{N_f}_{layers}_L{L}_seed{seed}_source{source}_{u0_str}_lr{lr}.pdf")
+    fn = f"{path}/{prefix}_upredicted_{system}_nu{nu}_beta{beta}" \
+         f"_rho{rho}_Nf{N_f}_{layers}_L{L}_seed{seed}_source{source}" \
+         f"_{u0_str}_lr{lr}.png"
+    print(fn)
+    plt.savefig(fn)
 
     plt.close()
     return None

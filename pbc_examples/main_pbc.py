@@ -37,7 +37,7 @@ parser.add_argument('--net', type=str, default='DNN', help='The net architecture
 parser.add_argument('--activation', default='tanh', help='Activation to use in the network.')
 parser.add_argument('--loss_style', default='mean', help='Loss for the network (MSE, vs. summing).')
 
-parser.add_argument('--visualize', default=False, help='Visualize the solution.')
+parser.add_argument('--visualize', default=True, help='Visualize the solution.')
 parser.add_argument('--save_model', default=False, help='Save the model for analysis later.')
 
 args = parser.parse_args()
@@ -127,26 +127,69 @@ set_seed(args.seed) # for weight initialization
 
 model = PhysicsInformedNN_pbc(args.system, X_u_train, u_train, X_f_train, bc_lb, bc_ub, layers, G, nu, beta, rho,
                             args.optimizer_name, args.lr, args.net, args.L, args.activation, args.loss_style)
-model.train()
 
-u_pred = model.predict(X_star)
+def eval(e=-1):
+    # new data points
+    nt = 100
+    x = np.linspace(0, 2 * np.pi, args.xgrid, endpoint=False).reshape(-1, 1)  # not inclusive
+    t = np.linspace(0, 1, nt).reshape(-1, 1)
+    X, T = np.meshgrid(x, t)  # all the X grid points T times, all the T grid points X times
+    X_star = np.hstack((X.flatten()[:, None], T.flatten()[:, None]))  # all the x,t "test" data
 
-error_u_relative = np.linalg.norm(u_star-u_pred, 2)/np.linalg.norm(u_star, 2)
-error_u_abs = np.mean(np.abs(u_star - u_pred))
-error_u_linf = np.linalg.norm(u_star - u_pred, np.inf)/np.linalg.norm(u_star, np.inf)
+    u_pred = model.predict(X_star)
+    f_pred = model.predict_f(X_star)
 
-print('Error u rel: %e' % (error_u_relative))
-print('Error u abs: %e' % (error_u_abs))
-print('Error u linf: %e' % (error_u_linf))
+    if 'convection' in args.system or 'diffusion' in args.system:
+        u_vals = convection_diffusion(args.u0_str, nu, beta, args.source, args.xgrid, nt)
+        G = np.full(X_f_train.shape[0], float(args.source))
+    elif 'rd' in args.system:
+        u_vals = reaction_diffusion_discrete_solution(args.u0_str, nu, rho, args.xgrid, nt)
+        G = np.full(X_f_train.shape[0], float(args.source))
+    elif 'reaction' in args.system:
+        u_vals = reaction_solution(args.u0_str, rho, args.xgrid, args.nt)
+        G = np.full(X_f_train.shape[0], float(args.source))
+    else:
+        print("WARNING: System is not specified.")
 
-if args.visualize:
-    path = f"heatmap_results/{args.system}"
-    if not os.path.exists(path):
-        os.makedirs(path)
-    u_pred = u_pred.reshape(len(t), len(x))
-    exact_u(Exact, x, t, nu, beta, rho, orig_layers, args.N_f, args.L, args.source, args.u0_str, args.system, path=path)
-    u_diff(Exact, u_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr, args.u0_str, args.system, path=path)
-    u_predict(u_vals, u_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr, args.u0_str, args.system, path=path)
+    u_star = u_vals.reshape(-1, 1)  # Exact solution reshaped into (n, 1)
+    Exact = u_star.reshape(len(t), len(x))  # Exact on the (x,t) grid
+
+    error_u_relative = np.linalg.norm(u_star - u_pred, 2) / np.linalg.norm(u_star, 2)
+    error_u_abs = np.mean(np.abs(u_star - u_pred))
+    error_u_linf = np.linalg.norm(u_star - u_pred, np.inf) / np.linalg.norm(u_star, np.inf)
+
+    print('Error u rel: %e' % (error_u_relative))
+    print('Error u abs: %e' % (error_u_abs))
+    print('Error u linf: %e' % (error_u_linf))
+
+    if args.visualize:
+        path = f"heatmap_results/{args.system}"
+        if not os.path.exists(path):
+            os.makedirs(path)
+        print('saving to ', path)
+
+        u_pred = u_pred.reshape(len(t), len(x))
+        f_pred = f_pred.reshape(len(t), len(x))
+        # exact_u(Exact, x, t, nu, beta, rho, orig_layers, args.N_f, args.L, args.source, args.u0_str, args.system,
+        #         path=path)
+        # u_diff(Exact, u_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
+        #        args.u0_str, args.system, path=path)
+        u_predict(u_vals, u_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
+                  args.u0_str, args.system, path=path, prefix=f'epoch:{e}')
+        u_predict(u_vals, f_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
+                  args.u0_str, args.system, path=path, prefix=f'f_epoch:{e}')
+
+if args.optimizer_name != 'LBFGS':
+    for e in range(10000):
+        if e % 100 == 0:
+            eval(e)
+        model.train()
+
+else:
+    model.train()
+
+eval()
+
 
 if args.save_model: # whether or not to save the model
     path = "saved_models"
