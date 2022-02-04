@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -10,6 +12,7 @@ if torch.cuda.is_available():
     device = torch.device('cuda')
 else:
     device = torch.device('cpu')
+
 
 # the deep neural network
 class DNN(torch.nn.Module):
@@ -57,6 +60,26 @@ class DNN(torch.nn.Module):
         out = self.layers(x)
         return out
 
+
+class LatentDNN(torch.nn.Module):
+    def __init__(self, layers, activation, use_batch_norm=False, use_instance_norm=False):
+        super(LatentDNN, self).__init__()
+        latent_dim = 2
+        self.d = DNN([layers[0] - 1 + latent_dim] + layers[1:], activation, use_batch_norm, use_instance_norm)
+        self.z = DNN([1, 64, 64, latent_dim], activation, use_batch_norm, use_instance_norm)
+        self.zphase = nn.Parameter(torch.linspace(0, 1, latent_dim).unsqueeze(0))
+        self.zt = None
+
+    def forward(self, x):
+        x, t = x[:, [0]], x[:, [1]]
+        zt = self.z(t)
+        zt = torch.cos(2*5*math.pi*(zt + self.zphase))
+        self.zt = zt
+        self.t = t
+        ut = self.d(torch.cat([x, zt], 1))
+        return ut
+
+
 class PhysicsInformedNN_pbc():
     """PINNs (convection/diffusion/reaction) for periodic boundary conditions."""
     def __init__(self, system, X_u_train, u_train, X_f_train, bc_lb, bc_ub, layers, G, nu, beta, rho, optimizer_name, lr,
@@ -75,7 +98,7 @@ class PhysicsInformedNN_pbc():
         self.net = net
 
         if self.net == 'DNN':
-            self.dnn = DNN(layers, activation).to(device)
+            self.dnn = LatentDNN(layers, activation).to(device)
         else: # "pretrained" can be included in model path
             # the dnn is within the PINNs class
             self.dnn = torch.load(net).dnn
@@ -130,7 +153,10 @@ class PhysicsInformedNN_pbc():
             )[0]
 
         if 'convection' in self.system or 'diffusion' in self.system:
-            f = u_t - self.nu*u_xx + self.beta*u_x - self.G
+            if any(self.G != 0):
+                assert 'Neeeded to put back self.G'
+            # f = u_t - self.nu*u_xx + self.beta*u_x - self.G
+            f = u_t - self.nu*u_xx + self.beta*u_x
         elif 'rd' in self.system:
             f = u_t - self.nu*u_xx - self.rho*u + self.rho*u**2
         elif 'reaction' in self.system:
@@ -213,3 +239,13 @@ class PhysicsInformedNN_pbc():
         u = u.detach().cpu().numpy()
 
         return u
+
+    def predict_f(self, X):
+        x = torch.tensor(X[:, 0:1], requires_grad=True).float().to(device)
+        t = torch.tensor(X[:, 1:2], requires_grad=True).float().to(device)
+
+        self.dnn.eval()
+        f = self.net_f(x, t)
+        f = f.detach().cpu().numpy() ** 2
+
+        return f
