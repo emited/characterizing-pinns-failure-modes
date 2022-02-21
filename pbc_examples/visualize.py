@@ -109,7 +109,7 @@ def u_predict(u_vals, U_pred, x, t, nu, beta, rho, seed, layers, N_f, L, source,
          f"_rho{rho}_Nf{N_f}_{layers}_L{L}_seed{seed}_source{source}" \
          f"_{u0_str}_lr{lr}.png"
     print(fn)
-    plt.savefig(fn)
-
-    plt.close()
+    # plt.savefig(fn)
+    #
+    # plt.close()
     return None

@@ -38,6 +38,7 @@ parser.add_argument('--activation', default='tanh', help='Activation to use in t
 parser.add_argument('--loss_style', default='mean', help='Loss for the network (MSE, vs. summing).')
 
 parser.add_argument('--visualize', default=True, help='Visualize the solution.')
+parser.add_argument('--train_method', default='regression', choices=['regression', 'pinns'],)
 parser.add_argument('--save_model', default=False, help='Save the model for analysis later.')
 
 args = parser.parse_args()
@@ -63,6 +64,9 @@ elif args.system == 'rd': # reaction-diffusion
 elif args.system == 'reaction':
     nu = 0.0
     beta = 0.0
+elif args.system == 'wave':
+    # simple wave with beta as speed
+    pass
 
 print('nu', nu, 'beta', beta, 'rho', rho)
 
@@ -73,8 +77,7 @@ layers = [int(item) for item in args.layers.split(',')]
 ############################
 # Process data
 ############################
-
-x = np.linspace(0, 2*np.pi, args.xgrid, endpoint=False).reshape(-1, 1) # not inclusive
+x = np.linspace(0, 2 * np.pi, args.xgrid, endpoint=False).reshape(-1, 1) # not inclusive
 t = np.linspace(0, 1, args.nt).reshape(-1, 1)
 X, T = np.meshgrid(x, t) # all the X grid points T times, all the T grid points X times
 X_star = np.hstack((X.flatten()[:, None], T.flatten()[:, None])) # all the x,t "test" data
@@ -97,6 +100,9 @@ elif 'rd' in args.system:
     G = np.full(X_f_train.shape[0], float(args.source))
 elif 'reaction' in args.system:
     u_vals = reaction_solution(args.u0_str, rho, args.xgrid, args.nt)
+    G = np.full(X_f_train.shape[0], float(args.source))
+elif args.system == 'wave':
+    u_vals = wave_solution(args.u0_str, beta, args.xgrid, args.nt)
     G = np.full(X_f_train.shape[0], float(args.source))
 else:
     print("WARNING: System is not specified.")
@@ -126,7 +132,8 @@ layers.insert(0, X_u_train.shape[-1])
 set_seed(args.seed) # for weight initialization
 
 model = PhysicsInformedNN_pbc(args.system, X_u_train, u_train, X_f_train, bc_lb, bc_ub, layers, G, nu, beta, rho,
-                            args.optimizer_name, args.lr, args.net, args.L, args.activation, args.loss_style)
+                            args.optimizer_name, args.lr, args.net, args.L, args.activation, args.loss_style,
+                              u_star=u_star, train_method=args.train_method, X_star=X_star)
 
 def eval(e=-1):
     # new data points
@@ -137,7 +144,7 @@ def eval(e=-1):
     X_star = np.hstack((X.flatten()[:, None], T.flatten()[:, None]))  # all the x,t "test" data
 
     u_pred = model.predict(X_star)
-    f_pred = model.predict_f(X_star)
+    # f_pred = model.predict_f(X_star)
 
     if 'convection' in args.system or 'diffusion' in args.system:
         u_vals = convection_diffusion(args.u0_str, nu, beta, args.source, args.xgrid, nt)
@@ -148,6 +155,8 @@ def eval(e=-1):
     elif 'reaction' in args.system:
         u_vals = reaction_solution(args.u0_str, rho, args.xgrid, args.nt)
         G = np.full(X_f_train.shape[0], float(args.source))
+    elif args.system == 'wave':
+        u_vals = wave_solution(args.u0_str, beta, args.xgrid, args.nt)
     else:
         print("WARNING: System is not specified.")
 
@@ -169,7 +178,7 @@ def eval(e=-1):
         print('saving to ', path)
 
         u_pred = u_pred.reshape(len(t), len(x))
-        f_pred = f_pred.reshape(len(t), len(x))
+        # f_pred = f_pred.reshape(len(t), len(x))
         # exact_u(Exact, x, t, nu, beta, rho, orig_layers, args.N_f, args.L, args.source, args.u0_str, args.system,
         #         path=path)
         # u_diff(Exact, u_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
@@ -179,15 +188,40 @@ def eval(e=-1):
              f"_rho{rho}_Nf{args.N_f}_{orig_layers}_L{ args.L}_seed{args.seed}_source{args.source}" \
              f"_{args.u0_str}_lr{args.lr}.png"
         import matplotlib.pyplot as plt
-        zt = model.dnn.zt.detach().cpu().numpy()
-        plt.scatter(zt[:, 0], zt[:, 1], c= model.dnn.t.squeeze().detach().cpu().numpy())  # yellow: 1, blue:  0
-        plt.colorbar()
-        plt.savefig(fn)
-        plt.clf()
+        if isinstance(model.dnn, SeparationDNN):
+            zt = model.dnn.zt.detach().cpu().numpy()
+            px = model.dnn.px.detach().cpu().numpy()
+            pr = model.dnn.prod.detach().cpu().numpy()
+            plt.subplot(2, 2, 1)
+            plt.title(r'$\{z(t)\}_{t \in [0, 1]}$')
+            plt.gca().set_aspect('equal')
+            plt.scatter(zt[:, 0], zt[:, 1], c=model.dnn.t.squeeze().detach().cpu().numpy(), label='zt')  # yellow: 1, blue:  0
+            plt.subplot(2, 2, 2)
+            plt.gca().set_aspect('equal')
+            plt.title(r'$\{p(x)\}_{x \in [0, 2 \pi]}$')
+            plt.scatter(px[:, 0], px[:, 1], c= model.dnn.x.squeeze().detach().cpu().numpy(), label='px', cmap='inferno')  # yellow: 1, blue:  0
+            plt.subplot(2, 2, 3)
+            plt.gca().set_aspect('equal')
+            plt.title(r'$\{z(t) \cdot p(x)\}_{t \in [0, 1], x \in [0, 2 \pi]}$')
+            plt.scatter(pr[:, 0], pr[:, 1], c= model.dnn.t.squeeze().detach().cpu().numpy(), label='t')  # yellow: 1, blue:  0
+            plt.colorbar()
+            plt.subplot(2, 2, 4)
+            plt.gca().set_aspect('equal')
+            plt.title(r'$\{z(t) \cdot p(x)\}_{t \in [0, 1], x \in [0, 2 \pi]}$')
+            plt.scatter(pr[:, 0], pr[:, 1], c= model.dnn.x.squeeze().detach().cpu().numpy(), label='x', cmap='inferno')  # yellow: 1, blue:  0
+            plt.colorbar()
+            plt.tight_layout()
+            plt.show()
+            # print(model.dnn.linear.weight)
+            plt.clf()
+
+        # plt.savefig(fn)
         u_predict(u_vals, u_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
                   args.u0_str, args.system, path=path, prefix=f'epoch:{e}')
-        u_predict(u_vals, f_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
-                  args.u0_str, args.system, path=path, prefix=f'f_epoch:{e}')
+        plt.show()
+        # u_predict(u_vals, f_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
+        #           args.u0_str, args.system, path=path, prefix=f'f_epoch:{e}')
+        # plt.show()
 
 if args.optimizer_name != 'LBFGS':
     for e in range(10000):

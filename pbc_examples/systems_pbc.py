@@ -8,6 +8,8 @@ def function(u0: str):
 
     if u0 == 'sin(x)':
         u0 = lambda x: np.sin(x)
+    elif u0 == 'sin(x/4)':
+        u0 = lambda x: np.sin(x * 0.25)
     elif u0 == 'sin(pix)':
         u0 = lambda x: np.sin(np.pi*x)
     elif u0 == 'sin^2(x)':
@@ -32,6 +34,8 @@ def function(u0: str):
         u0 = lambda x: 10 + np.sin(x)
     elif u0 == 'sin(2x)':
         u0 = lambda x: np.sin(2*x)
+    elif u0 == 'sin(6x)':
+        u0 = lambda x: np.sin(6*x)
     elif u0 == 'tanh(x)':
         u0 = lambda x: np.tanh(x)
     elif u0 == '2x':
@@ -155,5 +159,25 @@ def convection_diffusion(u0: str, nu, beta, source=0, xgrid=256, nt=100):
     uhat = A*nu_factor + np.fft.fft(G)*T # for constant, fft(p) dt = fft(p)*T
     u = np.real(np.fft.ifft(uhat))
 
+    u_vals = u.flatten()
+    return u_vals
+
+
+def wave_solution(u0: str, beta, xgrid=256, nt=100):
+    # assert source == 0
+    assert u0 == "sin(x/4)"
+
+    N = xgrid
+    h = 2 * np.pi / N
+    x = np.arange(0, 2*np.pi, h) # not inclusive of the last point
+    t = np.linspace(0, 1, nt).reshape(-1, 1)
+    X, T = np.meshgrid(x, t)
+
+    # u0 = function(u0)
+    # u0 = u0(x)
+
+    u = np.sin(0.25 * X) * np.cos(beta * T)
+    print('ok')
+    # G = (np.copy(u0) * 0) + source  # G is the same size as u0
     u_vals = u.flatten()
     return u_vals
