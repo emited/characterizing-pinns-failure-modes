@@ -76,7 +76,7 @@ def u_diff(Exact, U_pred, x, t, nu, beta, rho, seed, layers, N_f, L, source, lr,
 
     return None
 
-def u_predict(u_vals, U_pred, x, t, nu, beta, rho, seed, layers, N_f, L, source, lr, u0_str, system, path, prefix=''):
+def u_predict(u_vals, U_pred, x, t, nu, beta, rho, seed, layers, N_f, L, source, lr, u0_str, system, path, prefix='', X_collocation=None):
     """Visualize u_predicted."""
 
     fig = plt.figure(figsize=(9, 5))
@@ -86,6 +86,9 @@ def u_predict(u_vals, U_pred, x, t, nu, beta, rho, seed, layers, N_f, L, source,
     h = ax.imshow(U_pred.T, interpolation='nearest', cmap='rainbow',
                   extent=[t.min(), t.max(), x.min(), x.max()],
                   origin='lower', aspect='auto', vmin=U_pred.min().item(), vmax=U_pred.max().item())
+    # if X_collocation is not None:
+    #     ax.scatter(X_collocation[..., [1]], X_collocation[..., [0]], marker='x', c='black')
+
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.10)
     cbar = fig.colorbar(h, cax=cax)

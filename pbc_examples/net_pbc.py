@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import torch
 import torch.nn as nn
-from torch.nn import functional as F
+from torch.nn import functional as F, init
 from collections import OrderedDict
 import numpy as np
 from choose_optimizer import *
@@ -39,10 +39,27 @@ class Sine(nn.Module):
         # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
         return torch.sin(10*input)
 
+class LinearBiasBefore(nn.Linear):
+    def __init__(self, in_features: int, out_features: int, bias: bool = True,
+                 device=None, dtype=None) -> None:
+        factory_kwargs = {'device': device, 'dtype': dtype}
+        super(nn.Linear, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.weight = nn.Parameter(torch.empty((out_features, in_features), **factory_kwargs))
+        if bias:
+            self.bias = nn.Parameter(torch.empty(in_features, **factory_kwargs))
+        else:
+            self.register_parameter('bias', None)
+        self.reset_parameters()
+
+    def forward(self, input):
+        return F.linear(input + self.bias, self.weight, None)
+
 
 # the deep neural network
 class DNN(torch.nn.Module):
-    def __init__(self, layers, activation, use_batch_norm=False, use_instance_norm=False):
+    def __init__(self, layers, activation, use_batch_norm=False, use_instance_norm=False, bias_before=False, last_weight_is_zero_init=True):
         super(DNN, self).__init__()
 
         # parameters
@@ -67,8 +84,15 @@ class DNN(torch.nn.Module):
 
         layer_list = list()
         for i in range(self.depth - 1):
+            if bias_before:
+                lin = LinearBiasBefore(layers[i], layers[i + 1])
+                with torch.no_grad():
+                    if lin.bias is not None:
+                        init.uniform_(lin.bias, -np.pi, np.pi)
+            else:
+                lin = nn.Linear(layers[i], layers[i + 1])
             layer_list.append(
-                ('layer_%d' % i, torch.nn.Linear(layers[i], layers[i+1]))
+                ('layer_%d' % i, lin)
             )
 
             if self.use_batch_norm:
@@ -81,7 +105,8 @@ class DNN(torch.nn.Module):
         layer_list.append(
             ('layer_%d' % (self.depth - 1), torch.nn.Linear(layers[-2], layers[-1]))
         )
-        layer_list[-1][1].weight.data.zero_()
+        if last_weight_is_zero_init:
+            layer_list[-1][1].weight.data.zero_()
         print(layer_list[-1][1].weight)
         layerDict = OrderedDict(layer_list)
 
@@ -122,23 +147,23 @@ class SymmetricInitDNN(DNN):
         return self.layers(inputs) - self.cloned_layers(inputs)
 
 
-class LatentDNN(torch.nn.Module):
-    def __init__(self, layers, activation, use_batch_norm=False, use_instance_norm=False):
-        super(LatentDNN, self).__init__()
-        latent_dim = 2
-        self.d = DNN([layers[0] - 1 + latent_dim] + layers[1:], activation, use_batch_norm, use_instance_norm)
-        self.z = DNN([1, 128, latent_dim], activation, use_batch_norm, use_instance_norm)
-        self.zphase = nn.Parameter(torch.linspace(0, 1, latent_dim).unsqueeze(0))
-        self.zt = None
-
-    def forward(self, x):
-        x, t = x[:, [0]], x[:, [1]]
-        zt = self.z(t)
-        zt = torch.cos(2*5*math.pi*(zt + self.zphase))
-        self.zt = zt
-        self.t = t
-        ut = self.d(torch.cat([x, zt], 1))
-        return ut
+# class LatentDNN(torch.nn.Module):
+#     def __init__(self, layers, activation, use_batch_norm=False, use_instance_norm=False):
+#         super(LatentDNN, self).__init__()
+#         latent_dim = 2
+#         self.d = DNN([layers[0] - 1 + latent_dim] + layers[1:], activation, use_batch_norm, use_instance_norm)
+#         self.z = DNN([1, 128, latent_dim], activation, use_batch_norm, use_instance_norm)
+#         self.zphase = nn.Parameter(torch.linspace(0, 1, latent_dim).unsqueeze(0))
+#         self.zt = None
+#
+#     def forward(self, x):
+#         x, t = x[:, [0]], x[:, [1]]
+#         zt = self.z(t)
+#         zt = torch.cos(2*5*math.pi*(zt + self.zphase))
+#         self.zt = zt
+#         self.t = t
+#         ut = self.d(torch.cat([x, zt], 1))
+#         return ut
 
 class SeparationDNN(torch.nn.Module):
     def __init__(self, layers, activation, use_batch_norm=False, use_instance_norm=False,
@@ -154,16 +179,23 @@ class SeparationDNN(torch.nn.Module):
 
         # self.d = DNN([latent_dim] + [layers[-1]], 'identity', use_batch_norm, use_instance_norm)
         self.d = SymmetricInitDNN([latent_dim * latent_dim_factor, hidden_dim, 1],
-                                  "relu", use_batch_norm, use_instance_norm)
+                                  "lrelu", use_batch_norm, use_instance_norm)
+        # self.d = DNN([latent_dim * latent_dim_factor, hidden_dim, 1],
+        #                           "lrelu", use_batch_norm, use_instance_norm, last_weight_is_zero_init=True)
         # self.d = Resnet(latent_dim * latent_dim_factor, 1, [hidden_dim, hidden_dim],
         #                 5, "relu")
+        # self.d = SymmetricInitDNN([latent_dim * latent_dim_factor, hidden_dim, 1], 'identity', use_batch_norm, use_instance_norm)
         # self.d = SymmetricInitDNN([latent_dim] + [layers[-1]], 'identity', use_batch_norm, use_instance_norm)
         # self.d = DNN([latent_dim, hidden_dim, 1], "relu", use_batch_norm, use_instance_norm)
         # self.d = DNN([latent_dim, 512, 1], 'identity', use_batch_norm, use_instance_norm)
         # self.z = Resnet(1, latent_dim, [hidden_dim, hidden_dim], 5, activation)
         # self.p = Resnet(1, latent_dim, [hidden_dim, hidden_dim], 5, activation)
-        self.z = DNN([1, hidden_dim, hidden_dim, latent_dim], activation, )
-        self.p = DNN([1, hidden_dim, hidden_dim, latent_dim], activation,)
+        bias_before = False
+        last_weight_is_zero_init = True
+        self.z = DNN([1, hidden_dim, hidden_dim, latent_dim], activation,
+                     bias_before=bias_before, last_weight_is_zero_init=last_weight_is_zero_init)
+        self.p = DNN([1, hidden_dim, hidden_dim, latent_dim], activation,
+                     bias_before=bias_before, last_weight_is_zero_init=last_weight_is_zero_init)
         # self.zphase = nn.Parameter(torch.linspace(0, 1, latent_dim).unsqueeze(0))
         self.zt = None
 

@@ -66,7 +66,8 @@ elif args.system == 'reaction':
     beta = 0.0
 elif args.system == 'wave':
     # simple wave with beta as speed
-    pass
+    nu = 0.0
+    rho = 0.0
 
 print('nu', nu, 'beta', beta, 'rho', rho)
 
@@ -130,10 +131,11 @@ layers.insert(0, X_u_train.shape[-1])
 ############################
 
 set_seed(args.seed) # for weight initialization
-
+# u_star_train, X_star_train = sample_random(u_star, args.N_f), sample_random(X_star, args.N_f)
+X_star_train, u_star_train = X_star, u_star
 model = PhysicsInformedNN_pbc(args.system, X_u_train, u_train, X_f_train, bc_lb, bc_ub, layers, G, nu, beta, rho,
                             args.optimizer_name, args.lr, args.net, args.L, args.activation, args.loss_style,
-                              u_star=u_star, train_method=args.train_method, X_star=X_star)
+                              u_star=u_star_train, train_method=args.train_method, X_star=X_star_train)
 
 def eval(e=-1):
     # new data points
@@ -217,7 +219,8 @@ def eval(e=-1):
 
         # plt.savefig(fn)
         u_predict(u_vals, u_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
-                  args.u0_str, args.system, path=path, prefix=f'epoch:{e}')
+                  args.u0_str, args.system, path=path, prefix=f'epoch:{e}', X_collocation=X_star_train)
+
         plt.show()
         # u_predict(u_vals, f_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
         #           args.u0_str, args.system, path=path, prefix=f'f_epoch:{e}')

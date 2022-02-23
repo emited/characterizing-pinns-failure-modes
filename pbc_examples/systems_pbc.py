@@ -8,8 +8,8 @@ def function(u0: str):
 
     if u0 == 'sin(x)':
         u0 = lambda x: np.sin(x)
-    elif u0 == 'sin(x/4)':
-        u0 = lambda x: np.sin(x * 0.25)
+    elif u0 == 'sin(x/2)':
+        u0 = lambda x: np.sin(x * 0.5)
     elif u0 == 'sin(pix)':
         u0 = lambda x: np.sin(np.pi*x)
     elif u0 == 'sin^2(x)':
@@ -165,7 +165,7 @@ def convection_diffusion(u0: str, nu, beta, source=0, xgrid=256, nt=100):
 
 def wave_solution(u0: str, beta, xgrid=256, nt=100):
     # assert source == 0
-    assert u0 == "sin(x/4)"
+    assert u0 == "sin(x/2)"
 
     N = xgrid
     h = 2 * np.pi / N
@@ -176,8 +176,10 @@ def wave_solution(u0: str, beta, xgrid=256, nt=100):
     # u0 = function(u0)
     # u0 = u0(x)
 
-    u = np.sin(0.25 * X) * np.cos(beta * T)
-    print('ok')
+    u = np.sin(0.5 * X) * np.cos(beta * T * 0.5)
     # G = (np.copy(u0) * 0) + source  # G is the same size as u0
+    # import matplotlib.pyplot as plt
+    # plt.imshow(u)
+    # plt.show()
     u_vals = u.flatten()
     return u_vals
