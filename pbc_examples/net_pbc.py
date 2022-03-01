@@ -37,7 +37,18 @@ class Sine(nn.Module):
 
     def forward(self, input):
         # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
-        return torch.sin(10*input)
+        # return torch.sin(10*input)
+        return torch.sin(input)
+
+class SmallSine(nn.Module):
+    def __init(self):
+        super().__init__()
+
+    def forward(self, input):
+        # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
+        # return torch.sin(10*input)
+        return torch.sin(input)
+
 
 class LinearBiasBefore(nn.Linear):
     def __init__(self, in_features: int, out_features: int, bias: bool = True,
@@ -75,6 +86,8 @@ class DNN(torch.nn.Module):
             self.activation = torch.nn.GELU
         elif activation == 'sin':
             self.activation = Sine
+        elif activation == 'smallsin':
+            self.activation = SmallSine
         elif activation == 'lrelu':
             self.activation = torch.nn.LeakyReLU
         elif activation == 'swish':
@@ -86,9 +99,9 @@ class DNN(torch.nn.Module):
         for i in range(self.depth - 1):
             if bias_before:
                 lin = LinearBiasBefore(layers[i], layers[i + 1])
-                with torch.no_grad():
-                    if lin.bias is not None:
-                        init.uniform_(lin.bias, -np.pi, np.pi)
+                # with torch.no_grad():
+                #     if lin.bias is not None:
+                #         init.uniform_(lin.bias, -np.pi, np.pi)
             else:
                 lin = nn.Linear(layers[i], layers[i + 1])
             layer_list.append(
@@ -165,38 +178,69 @@ class SymmetricInitDNN(DNN):
 #         ut = self.d(torch.cat([x, zt], 1))
 #         return ut
 
+class EulerNet(nn.Module):
+    def __init__(self, latent_dim, dt=1/15, steps=1):
+        super(EulerNet, self).__init__()
+        self.dt = dt
+        self.steps = steps
+        self.x0 = nn.Parameter(torch.zeros(1, latent_dim))
+        self.vel = DNN([latent_dim, 256, latent_dim], 'sin',
+                       last_weight_is_zero_init=True)
+
+    def forward(self, t):
+        x = self.x0
+        xs = {0: x}
+        t_max = t.max().item()
+        t_unique = torch.unique(t).sort()[0]
+        # n = round(t_max / self.dt)
+        for ti in t_unique:
+            # if self.training():
+            x = x + 0.1 * self.vel(x)
+            # else:
+            #     x =
+            xs[ti.item()] = x
+        out =  torch.concat([xs[ti.item()] for ti in t], 0)
+        return out
+
+
 class SeparationDNN(torch.nn.Module):
     def __init__(self, layers, activation, use_batch_norm=False, use_instance_norm=False,
                  entangling_method='product'):
         super(SeparationDNN, self).__init__()
         self.entangling_method = entangling_method
-        latent_dim = 2
-        hidden_dim = 256
+        self.latent_dim = 2
+        hidden_dim = 512
+
         if entangling_method == 'concat':
             latent_dim_factor = 2
         else:
             latent_dim_factor = 1
-
-        # self.d = DNN([latent_dim] + [layers[-1]], 'identity', use_batch_norm, use_instance_norm)
-        self.d = SymmetricInitDNN([latent_dim * latent_dim_factor, hidden_dim, 1],
-                                  "lrelu", use_batch_norm, use_instance_norm)
-        # self.d = DNN([latent_dim * latent_dim_factor, hidden_dim, 1],
+        # self.d = lambda x: torch.sum(x, -1, keepdim=True)
+        # self.d = DNN([self.latent_dim] + [layers[-1]], 'identity', use_batch_norm, use_instance_norm,
+        #     last_weight_is_zero_init=True)
+        # self.d = SymmetricInitDNN([self.latent_dim * self.latent_dim_factor, hidden_dim, 1],
+        #                           "lrelu", use_batch_norm, use_instance_norm)
+        # self.d = DNN([self.latent_dim * latent_dim_factor, hidden_dim, 1],
         #                           "lrelu", use_batch_norm, use_instance_norm, last_weight_is_zero_init=True)
-        # self.d = Resnet(latent_dim * latent_dim_factor, 1, [hidden_dim, hidden_dim],
+        self.d = DNN([self.latent_dim * latent_dim_factor, hidden_dim, 1],
+                                  "identity", use_batch_norm, use_instance_norm, last_weight_is_zero_init=True)
+        # self.d = Resnet(self.latent_dim * latent_dim_factor, 1, [hidden_dim, hidden_dim],
         #                 5, "relu")
-        # self.d = SymmetricInitDNN([latent_dim * latent_dim_factor, hidden_dim, 1], 'identity', use_batch_norm, use_instance_norm)
-        # self.d = SymmetricInitDNN([latent_dim] + [layers[-1]], 'identity', use_batch_norm, use_instance_norm)
-        # self.d = DNN([latent_dim, hidden_dim, 1], "relu", use_batch_norm, use_instance_norm)
-        # self.d = DNN([latent_dim, 512, 1], 'identity', use_batch_norm, use_instance_norm)
-        # self.z = Resnet(1, latent_dim, [hidden_dim, hidden_dim], 5, activation)
-        # self.p = Resnet(1, latent_dim, [hidden_dim, hidden_dim], 5, activation)
-        bias_before = False
+        # self.d = SymmetricInitDNN([self.latent_dim * latent_dim_factor, hidden_dim, 1], 'identity', use_batch_norm, use_instance_norm)
+        # self.d = SymmetricInitDNN([self.latent_dim] + [layers[-1]], 'identity', use_batch_norm, use_instance_norm)
+        # self.d = DNN([self.latent_dim, hidden_dim, 1], "relu", use_batch_norm, use_instance_norm)
+        # self.d = DNN([self.latent_dim, 512, 1], 'identity', use_batch_norm, use_instance_norm)
+        # self.z = Resnet(1, self.latent_dim, [hidden_dim, hidden_dim], 5, activation)
+        # self.p = Resnet(1, self.latent_dim, [hidden_dim, hidden_dim], 5, activation)
+        bias_before = True
         last_weight_is_zero_init = True
-        self.z = DNN([1, hidden_dim, hidden_dim, latent_dim], activation,
+        self.z = DNN([1, hidden_dim, hidden_dim, self.latent_dim], 'sin',
                      bias_before=bias_before, last_weight_is_zero_init=last_weight_is_zero_init)
-        self.p = DNN([1, hidden_dim, hidden_dim, latent_dim], activation,
+        # self.z = EulerNet(self.latent_dim)
+        self.p = DNN([1, hidden_dim, hidden_dim, self.latent_dim], 'sin',
+                     # bias_before=bias_before, last_weight_is_zero_init=True)
                      bias_before=bias_before, last_weight_is_zero_init=last_weight_is_zero_init)
-        # self.zphase = nn.Parameter(torch.linspace(0, 1, latent_dim).unsqueeze(0))
+        # self.zphase = nn.Parameter(torch.linspace(0, 1, self.latent_dim).unsqueeze(0))
         self.zt = None
 
     def forward(self, x):
@@ -338,16 +382,16 @@ class PhysicsInformedNN_pbc():
         if loss.requires_grad:
             loss.backward()
 
-        grad_norm = 0
-        for p in self.dnn.parameters():
-            param_norm = p.grad.detach().data.norm(2)
-            grad_norm += param_norm.item() ** 2
-        grad_norm = grad_norm ** 0.5
+        # grad_norm = 0
+        # for p in self.dnn.parameters():
+        #     param_norm = p.grad.detach().data.norm(2)
+        #     grad_norm += param_norm.item() ** 2
+        # grad_norm = grad_norm ** 0.5
 
         if verbose:
             if self.iter % 100 == 0:
                 print(
-                    'epoch %d, gradient: %.5e, loss: %.5e' % (self.iter, grad_norm, loss.item(), )
+                    'epoch %d, gradient: %.5e, loss: %.5e' % (self.iter, 0, loss.item(), )
                 )
             self.iter += 1
 

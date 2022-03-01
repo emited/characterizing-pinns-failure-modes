@@ -38,6 +38,9 @@ def function(u0: str):
         u0 = lambda x: np.sin(6*x)
     elif u0 == 'tanh(x)':
         u0 = lambda x: np.tanh(x)
+    elif u0 == 'tanhc(x)':
+        x0 = np.pi
+        u0 = lambda x: np.tanh(x-x0)
     elif u0 == '2x':
         u0 = lambda x: 2*x
     elif u0 == 'x^2':
@@ -46,6 +49,9 @@ def function(u0: str):
         x0 = np.pi
         sigma = np.pi/4
         u0 = lambda x: np.exp(-np.power((x - x0)/sigma, 2.)/2.)
+    elif u0 == 'parabola':
+        x0 = np.pi
+        u0 = lambda x: (x - x0) ** 2 * 0.5 / np.pi
     return u0
 
 def reaction(u, rho, dt):

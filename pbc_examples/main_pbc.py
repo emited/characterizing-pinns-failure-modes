@@ -110,6 +110,9 @@ else:
 
 u_star = u_vals.reshape(-1, 1) # Exact solution reshaped into (n, 1)
 Exact = u_star.reshape(len(t), len(x)) # Exact on the (x,t) grid
+u_predict(None, Exact, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
+          args.u0_str, args.system, path=None, prefix=f'target', X_collocation=None)
+plt.show()
 
 xx1 = np.hstack((X[0:1,:].T, T[0:1,:].T)) # initial condition, from x = [-end, +end] and t=0
 uu1 = Exact[0:1,:].T # u(x, t) at t=0
@@ -139,9 +142,9 @@ model = PhysicsInformedNN_pbc(args.system, X_u_train, u_train, X_f_train, bc_lb,
 
 def eval(e=-1):
     # new data points
-    nt = 100
+    nt = args.nt
     x = np.linspace(0, 2 * np.pi, args.xgrid, endpoint=False).reshape(-1, 1)  # not inclusive
-    t = np.linspace(0, 1, nt).reshape(-1, 1)
+    t = np.linspace(0, 2, nt).reshape(-1, 1)
     X, T = np.meshgrid(x, t)  # all the X grid points T times, all the T grid points X times
     X_star = np.hstack((X.flatten()[:, None], T.flatten()[:, None]))  # all the x,t "test" data
 
@@ -194,24 +197,39 @@ def eval(e=-1):
             zt = model.dnn.zt.detach().cpu().numpy()
             px = model.dnn.px.detach().cpu().numpy()
             pr = model.dnn.prod.detach().cpu().numpy()
+            plt.title(f'epoch:{e}')
             plt.subplot(2, 2, 1)
             plt.title(r'$\{z(t)\}_{t \in [0, 1]}$')
             plt.gca().set_aspect('equal')
-            plt.scatter(zt[:, 0], zt[:, 1], c=model.dnn.t.squeeze().detach().cpu().numpy(), label='zt')  # yellow: 1, blue:  0
+            if model.dnn.latent_dim == 1:
+                plt.scatter(T.flatten(), zt.squeeze())
+            else:
+                plt.scatter(zt[:, 0], zt[:, 1], c=model.dnn.t.squeeze().detach().cpu().numpy(), label='zt')  # yellow: 1, blue:  0
             plt.subplot(2, 2, 2)
             plt.gca().set_aspect('equal')
             plt.title(r'$\{p(x)\}_{x \in [0, 2 \pi]}$')
-            plt.scatter(px[:, 0], px[:, 1], c= model.dnn.x.squeeze().detach().cpu().numpy(), label='px', cmap='inferno')  # yellow: 1, blue:  0
+            if model.dnn.latent_dim == 1:
+                plt.scatter(X.flatten(), px.squeeze())
+            else:
+                plt.scatter(px[:, 0], px[:, 1], c= model.dnn.x.squeeze().detach().cpu().numpy(), label='px', cmap='inferno')  # yellow: 1, blue:  0
             plt.subplot(2, 2, 3)
             plt.gca().set_aspect('equal')
             plt.title(r'$\{z(t) \cdot p(x)\}_{t \in [0, 1], x \in [0, 2 \pi]}$')
-            plt.scatter(pr[:, 0], pr[:, 1], c= model.dnn.t.squeeze().detach().cpu().numpy(), label='t')  # yellow: 1, blue:  0
-            plt.colorbar()
+            if model.dnn.latent_dim == 1:
+                pass
+                # plt.plot(T.squeeze(), zt.squeeze())
+            else:
+                plt.scatter(pr[:, 0], pr[:, 1], c= model.dnn.t.squeeze().detach().cpu().numpy(), label='t')  # yellow: 1, blue:  0
+                plt.colorbar()
             plt.subplot(2, 2, 4)
             plt.gca().set_aspect('equal')
             plt.title(r'$\{z(t) \cdot p(x)\}_{t \in [0, 1], x \in [0, 2 \pi]}$')
-            plt.scatter(pr[:, 0], pr[:, 1], c= model.dnn.x.squeeze().detach().cpu().numpy(), label='x', cmap='inferno')  # yellow: 1, blue:  0
-            plt.colorbar()
+            if model.dnn.latent_dim == 1:
+                pass
+                # plt.plot(T.squeeze(), zt.squeeze())
+            else:
+                plt.scatter(pr[:, 0], pr[:, 1], c= model.dnn.x.squeeze().detach().cpu().numpy(), label='x', cmap='inferno')  # yellow: 1, blue:  0
+                plt.colorbar()
             plt.tight_layout()
             plt.show()
             # print(model.dnn.linear.weight)
