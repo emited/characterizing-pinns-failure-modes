@@ -31,14 +31,25 @@ class LinearEstimator(nn.Module):
     def forward(self, x):
         return self.net(x) * self.factor
 
+
 class Sine(nn.Module):
     def __init(self):
         super().__init__()
 
     def forward(self, input):
         # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
-        # return torch.sin(10*input)
         return torch.sin(input)
+        # return torch.sin(input)
+
+
+class Exp(nn.Module):
+    def __init(self):
+        super().__init__()
+
+    def forward(self, input):
+        # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
+        return torch.exp(input)
+        # return torch.sin(input)
 
 class SmallSine(nn.Module):
     def __init(self):
@@ -48,6 +59,27 @@ class SmallSine(nn.Module):
         # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
         # return torch.sin(10*input)
         return torch.sin(input)
+
+
+def get_activation(activation):
+    if activation == 'identity':
+        return torch.nn.Identity
+    elif activation == 'tanh':
+        return torch.nn.Tanh
+    elif activation == 'relu':
+        return torch.nn.ReLU
+    elif activation == 'gelu':
+        return torch.nn.GELU
+    elif activation == 'sin':
+        return Sine
+    elif activation == 'exp':
+        return Exp
+    elif activation == 'smallsin':
+        return SmallSine
+    elif activation == 'lrelu':
+        return torch.nn.LeakyReLU
+    elif activation == 'swish':
+        return Swish
 
 
 class LinearBiasBefore(nn.Linear):
@@ -86,6 +118,8 @@ class DNN(torch.nn.Module):
             self.activation = torch.nn.GELU
         elif activation == 'sin':
             self.activation = Sine
+        elif activation == 'exp':
+            self.activation = Exp
         elif activation == 'smallsin':
             self.activation = SmallSine
         elif activation == 'lrelu':
@@ -120,7 +154,7 @@ class DNN(torch.nn.Module):
         )
         if last_weight_is_zero_init:
             layer_list[-1][1].weight.data.zero_()
-        print(layer_list[-1][1].weight)
+        # print(layer_list[-1][1].weight)
         layerDict = OrderedDict(layer_list)
 
         # deploy layers
@@ -203,27 +237,97 @@ class EulerNet(nn.Module):
         return out
 
 
+class ScaleAndShift(torch.nn.Module):
+    def __init_(self):
+        super().__init__()
+
+    def forward(self, x, scale, shift):
+        return x * scale + shift
+
+
+class Block(torch.nn.Module):
+    def __init__(self, embedding_dim, hidden_dim, activation):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.embedding_dim = embedding_dim
+        self.activation = activation
+
+        self.lin_emb = torch.nn.Linear(2 * self.embedding_dim, 2 * self.hidden_dim)
+        self.lin = torch.nn.Linear(self.hidden_dim, self.hidden_dim)
+        self.activation = get_activation(activation)()
+
+    def forward(self, h, ex, et):
+        params = self.lin_emb(torch.cat([ex, et], 1))
+        scale, shift = params[..., :self.hidden_dim], params[..., self.hidden_dim:]
+        preact = self.lin(h * scale + shift)
+        act = self.activation(preact)
+        return act
+
+
+class SeparationDNNA(torch.nn.Module):
+    def __init__(self, activation, use_batch_norm=False, use_instance_norm=False,
+                 entangling_method='product'):
+        super(SeparationDNNA, self).__init__()
+        self.entangling_method = entangling_method
+        self.latent_dim = 2
+        num_blocks = 6
+        hidden_dim = 256
+
+        bias_before = False
+        last_weight_is_zero_init = True
+        self.d = lambda x: torch.sum(x, -1, keepdim=True)
+
+        self.z = DNN([1, hidden_dim, hidden_dim,  hidden_dim, hidden_dim,  self.latent_dim], 'lrelu',
+                     bias_before=bias_before, last_weight_is_zero_init=last_weight_is_zero_init)
+        # self.ze = DNN([1, hidden_dim, hidden_dim, self.latent_dim], 'exp',
+        #              bias_before=bias_before, last_weight_is_zero_init=last_weight_is_zero_init)
+        # self.z = EulerNet(self.latent_dim)
+        self.p = DNN([1, hidden_dim, hidden_dim,  hidden_dim, hidden_dim,  self.latent_dim], 'lrelu',
+                     # bias_before=bias_before, last_weight_is_zero_init=True)
+                     bias_before=bias_before, last_weight_is_zero_init=last_weight_is_zero_init)
+        self.blocks = nn.ModuleList([Block(self.latent_dim, hidden_dim, 'sin') for _ in range(num_blocks)])
+
+        self.zt = None
+
+    def forward(self, x):
+        x, t = x[:, [0]], x[:, [1]]
+        self.t, self.x = t, x
+        zt, px = self.z(t), self.p(x)
+        self.zt, self.px = zt, px
+        self.prod = zt
+        h = 0
+        for b in self.blocks:
+            h = b(h, px, zt)
+        ut = self.d(h)
+        return ut
+
+
+
+
+
+
+
 class SeparationDNN(torch.nn.Module):
-    def __init__(self, layers, activation, use_batch_norm=False, use_instance_norm=False,
+    def __init__(self, activation, use_batch_norm=False, use_instance_norm=False,
                  entangling_method='product'):
         super(SeparationDNN, self).__init__()
         self.entangling_method = entangling_method
         self.latent_dim = 2
-        hidden_dim = 512
+        hidden_dim = 256
 
         if entangling_method == 'concat':
             latent_dim_factor = 2
         else:
             latent_dim_factor = 1
-        # self.d = lambda x: torch.sum(x, -1, keepdim=True)
+        self.d = lambda x: torch.sum(x, -1, keepdim=True)
         # self.d = DNN([self.latent_dim] + [layers[-1]], 'identity', use_batch_norm, use_instance_norm,
         #     last_weight_is_zero_init=True)
         # self.d = SymmetricInitDNN([self.latent_dim * self.latent_dim_factor, hidden_dim, 1],
         #                           "lrelu", use_batch_norm, use_instance_norm)
         # self.d = DNN([self.latent_dim * latent_dim_factor, hidden_dim, 1],
         #                           "lrelu", use_batch_norm, use_instance_norm, last_weight_is_zero_init=True)
-        self.d = DNN([self.latent_dim * latent_dim_factor, hidden_dim, 1],
-                                  "identity", use_batch_norm, use_instance_norm, last_weight_is_zero_init=True)
+        # self.d = DNN([self.latent_dim * latent_dim_factor, hidden_dim, 1],
+        #                           "identity", use_batch_norm, use_instance_norm, last_weight_is_zero_init=True)
         # self.d = Resnet(self.latent_dim * latent_dim_factor, 1, [hidden_dim, hidden_dim],
         #                 5, "relu")
         # self.d = SymmetricInitDNN([self.latent_dim * latent_dim_factor, hidden_dim, 1], 'identity', use_batch_norm, use_instance_norm)
@@ -232,10 +336,12 @@ class SeparationDNN(torch.nn.Module):
         # self.d = DNN([self.latent_dim, 512, 1], 'identity', use_batch_norm, use_instance_norm)
         # self.z = Resnet(1, self.latent_dim, [hidden_dim, hidden_dim], 5, activation)
         # self.p = Resnet(1, self.latent_dim, [hidden_dim, hidden_dim], 5, activation)
-        bias_before = True
+        bias_before = False
         last_weight_is_zero_init = True
         self.z = DNN([1, hidden_dim, hidden_dim, self.latent_dim], 'sin',
                      bias_before=bias_before, last_weight_is_zero_init=last_weight_is_zero_init)
+        # self.ze = DNN([1, hidden_dim, hidden_dim, self.latent_dim], 'exp',
+        #              bias_before=bias_before, last_weight_is_zero_init=last_weight_is_zero_init)
         # self.z = EulerNet(self.latent_dim)
         self.p = DNN([1, hidden_dim, hidden_dim, self.latent_dim], 'sin',
                      # bias_before=bias_before, last_weight_is_zero_init=True)
@@ -246,6 +352,8 @@ class SeparationDNN(torch.nn.Module):
     def forward(self, x):
         x, t = x[:, [0]], x[:, [1]]
         zt, px = self.z(t), self.p(x)
+        # zet = self.ze(t)
+        # zt = zt * zet
         self.zt = zt
         self.px = px
         if self.entangling_method == 'product':
@@ -285,7 +393,7 @@ class PhysicsInformedNN_pbc():
 
         if self.net == 'DNN':
             # self.dnn = LatentDNN(layers, activation).to(device)
-            self.dnn = SeparationDNN(layers, activation).to(device)
+            self.dnn = SeparationDNNA(activation).to(device)
         else: # "pretrained" can be included in model path
             # the dnn is within the PINNs class
             self.dnn = torch.load(net).dnn
@@ -353,7 +461,7 @@ class PhysicsInformedNN_pbc():
     def net_b_derivatives(self, u_lb, u_ub, x_bc_lb, x_bc_ub):
         """For taking BC derivatives."""
 
-        u_lb_x = torch.autograd.grad(
+        u_lb_x  = torch.autograd.grad(
             u_lb, x_bc_lb,
             grad_outputs=torch.ones_like(u_lb),
             retain_graph=True,

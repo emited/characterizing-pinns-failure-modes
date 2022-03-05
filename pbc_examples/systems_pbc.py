@@ -52,6 +52,8 @@ def function(u0: str):
     elif u0 == 'parabola':
         x0 = np.pi
         u0 = lambda x: (x - x0) ** 2 * 0.5 / np.pi
+    else:
+        return lambda x: eval(u0)
     return u0
 
 def reaction(u, rho, dt):

@@ -1,11 +1,13 @@
 """Run PINNs for convection/reaction/reaction-diffusion with periodic boundary conditions."""
 
 import argparse
-from net_pbc import *
+from net_pbc_aug import *
 import numpy as np
 import os
 import random
 import torch
+
+from pbc_examples.net_pbc_aug import PhysicsInformedNN_pbc_aug
 from systems_pbc import *
 import torch.backends.cudnn as cudnn
 from utils import *
@@ -75,59 +77,61 @@ print('nu', nu, 'beta', beta, 'rho', rho)
 orig_layers = args.layers
 layers = [int(item) for item in args.layers.split(',')]
 
-############################
-# Process data
-############################
-x = np.linspace(0, 2 * np.pi, args.xgrid, endpoint=False).reshape(-1, 1) # not inclusive
-t = np.linspace(0, 1, args.nt).reshape(-1, 1)
-X, T = np.meshgrid(x, t) # all the X grid points T times, all the T grid points X times
-X_star = np.hstack((X.flatten()[:, None], T.flatten()[:, None])) # all the x,t "test" data
+# def gen_data(system, u0_str, nu, beta):
+def gen_data(u0_str):
+    ############################
+    # Process data
+    ############################
+    x = np.linspace(0, 2 * np.pi, args.xgrid, endpoint=False).reshape(-1, 1) # not inclusive
+    t = np.linspace(0, 1, args.nt).reshape(-1, 1)
+    X, T = np.meshgrid(x, t) # all the X grid points T times, all the T grid points X times
+    X_star = np.hstack((X.flatten()[:, None], T.flatten()[:, None])) # all the x,t "test" data
 
-# remove initial and boundaty data from X_star
-t_noinitial = t[1:]
-# remove boundary at x=0
-x_noboundary = x[1:]
-X_noboundary, T_noinitial = np.meshgrid(x_noboundary, t_noinitial)
-X_star_noinitial_noboundary = np.hstack((X_noboundary.flatten()[:, None], T_noinitial.flatten()[:, None]))
+    # remove initial and boundaty data from X_star
+    t_noinitial = t[1:]
+    # remove boundary at x=0
+    x_noboundary = x[1:]
+    X_noboundary, T_noinitial = np.meshgrid(x_noboundary, t_noinitial)
+    X_star_noinitial_noboundary = np.hstack((X_noboundary.flatten()[:, None], T_noinitial.flatten()[:, None]))
 
-# sample collocation points only from the interior (where the PDE is enforced)
-X_f_train = sample_random(X_star_noinitial_noboundary, args.N_f)
+    # sample collocation points only from the interior (where the PDE is enforced)
+    X_f_train = sample_random(X_star_noinitial_noboundary, args.N_f)
 
-if 'convection' in args.system or 'diffusion' in args.system:
-    u_vals = convection_diffusion(args.u0_str, nu, beta, args.source, args.xgrid, args.nt)
-    G = np.full(X_f_train.shape[0], float(args.source))
-elif 'rd' in args.system:
-    u_vals = reaction_diffusion_discrete_solution(args.u0_str, nu, rho, args.xgrid, args.nt)
-    G = np.full(X_f_train.shape[0], float(args.source))
-elif 'reaction' in args.system:
-    u_vals = reaction_solution(args.u0_str, rho, args.xgrid, args.nt)
-    G = np.full(X_f_train.shape[0], float(args.source))
-elif args.system == 'wave':
-    u_vals = wave_solution(args.u0_str, beta, args.xgrid, args.nt)
-    G = np.full(X_f_train.shape[0], float(args.source))
-else:
-    print("WARNING: System is not specified.")
+    if 'convection' in args.system or 'diffusion' in args.system:
+        u_vals = convection_diffusion(u0_str, nu, beta, args.source, args.xgrid, args.nt)
+        G = np.full(X_f_train.shape[0], float(args.source))
+    elif 'rd' in args.system:
+        u_vals = reaction_diffusion_discrete_solution(u0_str, nu, rho, args.xgrid, args.nt)
+        G = np.full(X_f_train.shape[0], float(args.source))
+    elif 'reaction' in args.system:
+        u_vals = reaction_solution(u0_str, rho, args.xgrid, args.nt)
+        G = np.full(X_f_train.shape[0], float(args.source))
+    elif args.system == 'wave':
+        u_vals = wave_solution(u0_str, beta, args.xgrid, args.nt)
+        G = np.full(X_f_train.shape[0], float(args.source))
+    else:
+        print("WARNING: System is not specified.")
 
-u_star = u_vals.reshape(-1, 1) # Exact solution reshaped into (n, 1)
-Exact = u_star.reshape(len(t), len(x)) # Exact on the (x,t) grid
-u_predict(None, Exact, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
-          args.u0_str, args.system, path=None, prefix=f'target', X_collocation=None)
-plt.show()
+    u_star = u_vals.reshape(-1, 1) # Exact solution reshaped into (n, 1)
+    Exact = u_star.reshape(len(t), len(x)) # Exact on the (x,t) grid
+    u_predict(None, Exact, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
+              u0_str, args.system, path=None, prefix=f'target', X_collocation=None)
+    plt.show()
 
-xx1 = np.hstack((X[0:1,:].T, T[0:1,:].T)) # initial condition, from x = [-end, +end] and t=0
-uu1 = Exact[0:1,:].T # u(x, t) at t=0
-bc_lb = np.hstack((X[:,0:1], T[:,0:1])) # boundary condition at x = 0, and t = [0, 1]
-uu2 = Exact[:,0:1] # u(-end, t)
+    xx1 = np.hstack((X[0:1,:].T, T[0:1,:].T)) # initial condition, from x = [-end, +end] and t=0
+    uu1 = Exact[0:1,:].T # u(x, t) at t=0
+    bc_lb = np.hstack((X[:,0:1], T[:,0:1])) # boundary condition at x = 0, and t = [0, 1]
+    uu2 = Exact[:,0:1] # u(-end, t)
 
-# generate the other BC, now at x=2pi
-t = np.linspace(0, 1, args.nt).reshape(-1, 1)
-x_bc_ub = np.array([2*np.pi]*t.shape[0]).reshape(-1, 1)
-bc_ub = np.hstack((x_bc_ub, t))
+    # generate the other BC, now at x=2pi
+    t = np.linspace(0, 1, args.nt).reshape(-1, 1)
+    x_bc_ub = np.array([2*np.pi]*t.shape[0]).reshape(-1, 1)
+    bc_ub = np.hstack((x_bc_ub, t))
 
-u_train = uu1 # just the initial condition
-X_u_train = xx1 # (x,t) for initial condition
+    u_train = uu1 # just the initial condition
+    X_u_train = xx1 # (x,t) for initial condition
 
-layers.insert(0, X_u_train.shape[-1])
+    return args.system, X_u_train, u_train, X_f_train, bc_lb, bc_ub, layers, G, nu, beta, rho, u_star, X_star, u0_str
 
 ############################
 # Train the model
@@ -135,33 +139,49 @@ layers.insert(0, X_u_train.shape[-1])
 
 set_seed(args.seed) # for weight initialization
 # u_star_train, X_star_train = sample_random(u_star, args.N_f), sample_random(X_star, args.N_f)
-X_star_train, u_star_train = X_star, u_star
-model = PhysicsInformedNN_pbc(args.system, X_u_train, u_train, X_f_train, bc_lb, bc_ub, layers, G, nu, beta, rho,
-                            args.optimizer_name, args.lr, args.net, args.L, args.activation, args.loss_style,
-                              u_star=u_star_train, train_method=args.train_method, X_star=X_star_train)
+# X_star_train, u_star_train = X_star, u_star
+# model = PhysicsInformedNN_pbc(args.system, X_u_train, u_train, X_f_train, bc_lb, bc_ub, layers, G, nu, beta, rho,
+#                             args.optimizer_name, args.lr, args.net, args.L, args.activation, args.loss_style,
+#                               u_star=u_star_train, train_method=args.train_method, X_star=X_star_train)
 
-def eval(e=-1):
+# data_list = [gen_data(args) for args in [args.u0_str, 'sin(2x)',  'sin(6x)',  'sin(x/2)']]
+# u0_strs = [args.u0_str, 'sin(2x)', 'sin(x/2)', 'sin(6x)']
+# u0_strs = ['sin(x)', 'sin(2x)', 'np.sin(1.5*x)', ]
+# u0_strs = ['sin(x)', '0.5sin(x)', '0.1sin(x)']
+# u0_strs = [f'np.sin({c}*x)' for c in np.linspace(1, 4, 4)/2]
+u0_strs = [f'np.sin({c}*x)' for c in [1, 2]]
+data_list = [gen_data(args) for args in u0_strs]
+data = DataList('u0_str', [Data(*data) for data in data_list])
+model = PhysicsInformedNN_pbc_aug(data, args.optimizer_name, args.lr, args.net, args.L, args.activation, args.loss_style,
+                                  train_method=args.train_method)
+
+
+def eval(e=-1, u0_str=None):
     # new data points
-    nt = args.nt
-    x = np.linspace(0, 2 * np.pi, args.xgrid, endpoint=False).reshape(-1, 1)  # not inclusive
-    t = np.linspace(0, 1, nt).reshape(-1, 1)
+    nt, xgrid = args.nt, args.xgrid
+    # nt, xgrid = 256, 256
+    x = np.linspace(0, 2 * np.pi, xgrid, endpoint=False).reshape(-1, 1)  # not inclusive
+    t = np.linspace(0, 2, nt).reshape(-1, 1)
     X, T = np.meshgrid(x, t)  # all the X grid points T times, all the T grid points X times
     X_star = np.hstack((X.flatten()[:, None], T.flatten()[:, None]))  # all the x,t "test" data
 
-    u_pred = model.predict(X_star)
+    if u0_str is None:
+        u0_str = args.u0_str
+    u_pred = model.predict(X_star, [u0_str])
+    print(u_pred.shape)
     # f_pred = model.predict_f(X_star)
 
     if 'convection' in args.system or 'diffusion' in args.system:
-        u_vals = convection_diffusion(args.u0_str, nu, beta, args.source, args.xgrid, nt)
-        G = np.full(X_f_train.shape[0], float(args.source))
+        u_vals = convection_diffusion(u0_str, nu, beta, args.source, xgrid, nt)
+        # G = np.full(data.X_f_train.shape[0], float(args.source))
     elif 'rd' in args.system:
-        u_vals = reaction_diffusion_discrete_solution(args.u0_str, nu, rho, args.xgrid, nt)
-        G = np.full(X_f_train.shape[0], float(args.source))
+        u_vals = reaction_diffusion_discrete_solution(u0_str, nu, rho, xgrid, nt)
+        # G = np.full(data.X_f_train.shape[0], float(args.source))
     elif 'reaction' in args.system:
-        u_vals = reaction_solution(args.u0_str, rho, args.xgrid, args.nt)
-        G = np.full(X_f_train.shape[0], float(args.source))
+        u_vals = reaction_solution(u0_str, rho, xgrid, args.nt)
+        # G = np.full(data.X_f_train.shape[0], float(args.source))
     elif args.system == 'wave':
-        u_vals = wave_solution(args.u0_str, beta, args.xgrid, args.nt)
+        u_vals = wave_solution(u0_str, beta, xgrid, args.nt)
     else:
         print("WARNING: System is not specified.")
 
@@ -184,20 +204,20 @@ def eval(e=-1):
 
         u_pred = u_pred.reshape(len(t), len(x))
         # f_pred = f_pred.reshape(len(t), len(x))
-        # exact_u(Exact, x, t, nu, beta, rho, orig_layers, args.N_f, args.L, args.source, args.u0_str, args.system,
+        # exact_u(Exact, x, t, nu, beta, rho, orig_layers, args.N_f, args.L, args.source, u0_str, args.system,
         #         path=path)
         # u_diff(Exact, u_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
-        #        args.u0_str, args.system, path=path)
+        #        u0_str, args.system, path=path)
         prefix = f'epoch:{e}'
         fn = f"{path}/{prefix}_zt_{args.system}_nu{nu}_beta{beta}" \
              f"_rho{rho}_Nf{args.N_f}_{orig_layers}_L{ args.L}_seed{args.seed}_source{args.source}" \
-             f"_{args.u0_str}_lr{args.lr}.png"
+             f"_{u0_str}_lr{args.lr}.png"
         import matplotlib.pyplot as plt
-        if isinstance(model.dnn, SeparationDNN) or isinstance(model.dnn, SeparationDNNA):
+        if True:
             zt = model.dnn.zt.detach().cpu().numpy()
             px = model.dnn.px.detach().cpu().numpy()
             pr = model.dnn.prod.detach().cpu().numpy()
-            plt.title(f'epoch:{e}')
+            plt.suptitle(f'u0_str:{u0_str}, epoch:{e}', fontsize=16)
             plt.subplot(2, 2, 1)
             plt.title(r'$\{z(t)\}_{t \in [0, 1]}$')
             plt.gca().set_aspect('equal')
@@ -237,17 +257,18 @@ def eval(e=-1):
 
         # plt.savefig(fn)
         u_predict(u_vals, u_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
-                  args.u0_str, args.system, path=path, prefix=f'epoch:{e}', X_collocation=X_star_train)
+                  u0_str, args.system, path=path, prefix=f'u0_str:{u0_str}, epoch:{e}')
 
         plt.show()
         # u_predict(u_vals, f_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
-        #           args.u0_str, args.system, path=path, prefix=f'f_epoch:{e}')
+        #           u0_str, args.system, path=path, prefix=f'f_epoch:{e}')
         # plt.show()
 
 if args.optimizer_name != 'LBFGS':
     for e in range(10000):
         if e % 500 == 0:
-            eval(e)
+            for u0_str in u0_strs:
+                eval(e, u0_str=u0_str)
         model.train()
 
 else:
@@ -256,9 +277,9 @@ else:
 eval()
 
 
-if args.save_model: # whether or not to save the model
-    path = "saved_models"
-    if not os.path.exists(path):
-        os.makedirs(path)
-    if 'pretrained' not in args.net: # only save new models
-        torch.save(model, f"saved_models/pretrained_{args.system}_u0{args.u0_str}_nu{nu}_beta{beta}_rho{rho}_Nf{args.N_f}_{args.layers}_L{args.L}_source{args.source}_seed{args.seed}.pt")
+# if args.save_model: # whether or not to save the model
+#     path = "saved_models"
+#     if not os.path.exists(path):
+#         os.makedirs(path)
+#     if 'pretrained' not in args.net: # only save new models
+#         torch.save(model, f"saved_models/pretrained_{args.system}_u0{args.u0_str}_nu{nu}_beta{beta}_rho{rho}_Nf{args.N_f}_{args.layers}_L{args.L}_source{args.source}_seed{args.seed}.pt")
