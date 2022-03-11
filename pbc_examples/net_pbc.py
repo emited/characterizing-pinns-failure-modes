@@ -277,12 +277,12 @@ class SeparationDNNA(torch.nn.Module):
         last_weight_is_zero_init = True
         self.d = lambda x: torch.sum(x, -1, keepdim=True)
 
-        self.z = DNN([1, hidden_dim, hidden_dim,  hidden_dim, hidden_dim,  self.latent_dim], 'lrelu',
+        self.z = DNN([1, hidden_dim, hidden_dim,  hidden_dim, hidden_dim,  self.latent_dim], 'sin',
                      bias_before=bias_before, last_weight_is_zero_init=last_weight_is_zero_init)
         # self.ze = DNN([1, hidden_dim, hidden_dim, self.latent_dim], 'exp',
         #              bias_before=bias_before, last_weight_is_zero_init=last_weight_is_zero_init)
         # self.z = EulerNet(self.latent_dim)
-        self.p = DNN([1, hidden_dim, hidden_dim,  hidden_dim, hidden_dim,  self.latent_dim], 'lrelu',
+        self.p = DNN([1, hidden_dim, hidden_dim,  hidden_dim, hidden_dim,  self.latent_dim], 'sin',
                      # bias_before=bias_before, last_weight_is_zero_init=True)
                      bias_before=bias_before, last_weight_is_zero_init=last_weight_is_zero_init)
         self.blocks = nn.ModuleList([Block(self.latent_dim, hidden_dim, 'sin') for _ in range(num_blocks)])
@@ -302,9 +302,54 @@ class SeparationDNNA(torch.nn.Module):
         return ut
 
 
+class SeparationEmbeddingDNN(torch.nn.Module):
+    def __init__(self, activation, use_batch_norm=False, use_instance_norm=False,
+                 entangling_method='product'):
+        super(SeparationEmbeddingDNN, self).__init__()
+        self.entangling_method = entangling_method
+        self.latent_dim = self.embedding_dim = 2
+        # hidden_dim = 256
+        T, L = 100, 256
+        # T, L = 50, 500
+        self.T, self.L = T, L
+        self.d = lambda x: torch.sum(x, -1, keepdim=True)
 
+        self.thash = lambda x: torch.round(x * (T-1)).int() # really dirty
+        self.xhash = lambda x: torch.round(x / np.pi * 0.5  * L).int()
 
+        self.et = torch.nn.Embedding(T, self.embedding_dim)
+        self.ex = torch.nn.Embedding(L, self.embedding_dim)
+        with torch.no_grad():
+            self.et.weight.data.zero_()
+            self.ex.weight.data.zero_()
+            bound = 1 / self.embedding_dim
+            xbound = bound / np.sqrt(T)
+            tbound = bound / np.sqrt(L)
+            # tbound = bound / np.sqrt(T)
+            tbias = torch.empty((self.embedding_dim,))
+            xbias = torch.empty((self.embedding_dim,))
+            init.uniform_(tbias, -tbound, tbound)
+            init.uniform_(xbias, -xbound, xbound)
+            self.et.weight.data = tbias.unsqueeze(0).repeat(T, 1)
+            # print((0.1 * torch.randn(self.et.weight.data.shape) / self.embedding_dim).shape)
+            # print(self.et.weight.data.shape, self.embedding_dim, self.ex.weight.data.shape)
+            self.ex.weight.data = xbias.unsqueeze(0).repeat(L, 1)
+                                  # + 0.1 * torch.randn(self.ex.weight.data.shape) / self.embedding_dim
 
+    def forward(self, x):
+        x, t = x[:, [0]], x[:, [1]]
+
+        # check if hash is bijection
+        assert torch.sum(torch.unique(self.thash(t)).sort()[0] != torch.arange(0, self.T).to(t.device)).item() == 0
+        assert torch.sum(torch.unique(self.xhash(x)).sort()[0] != torch.arange(0, self.L).to(x.device)).item() == 0
+
+        ti, xj = self.thash(t.squeeze(-1)), self.xhash(x.squeeze(-1))
+        zt, px = self.et(ti), self.ex(xj)
+
+        self.prod = zt * px
+        self.zt, self.px = zt, px
+        self.x, self.t = x, t
+        return self.d(self.prod)
 
 
 class SeparationDNN(torch.nn.Module):
@@ -393,7 +438,7 @@ class PhysicsInformedNN_pbc():
 
         if self.net == 'DNN':
             # self.dnn = LatentDNN(layers, activation).to(device)
-            self.dnn = SeparationDNNA(activation).to(device)
+            self.dnn = SeparationEmbeddingDNN(activation).to(device)
         else: # "pretrained" can be included in model path
             # the dnn is within the PINNs class
             self.dnn = torch.load(net).dnn

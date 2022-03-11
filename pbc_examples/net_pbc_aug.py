@@ -1,5 +1,6 @@
 import torch.nn
 from torch import nn
+from torch.nn import init
 
 from choose_optimizer import *
 
@@ -134,6 +135,145 @@ class SeparationDNNAA(torch.nn.Module):
                  entangling_method='product'):
         super(SeparationDNNAA, self).__init__()
         self.entangling_method = entangling_method
+        self.latent_dim = 20
+        num_blocks = 4
+        hidden_dim = 256
+
+        # bias_before = True
+        # last_weight_is_zero_init = True
+        # self.d = lambda x: torch.sum(x, -1, keepdim=True)
+        # self.d = nn.Linear(hidden_dim, 1)
+        # if last_weight_is_zero_init:
+        #     with torch.no_grad():
+        #         self.d.weight.data.zero_()
+        self.data = data
+        self.d = SymmetricInitDNN([hidden_dim, 1], "identity")
+        # self.d = SymmetricInitDNN([hidden_dim, hidden_dim, 1], "lrelu")
+        # self.z = DNN([1, hidden_dim, hidden_dim, hidden_dim, self.latent_dim], 'sin',
+        #              bias_before=bias_before, last_weight_is_zero_init=True)
+        # self.p = DNN([1, hidden_dim, hidden_dim,  hidden_dim, self.latent_dim], 'sin',
+        #              bias_before=bias_before, last_weight_is_zero_init=True)
+        # self.z = DNN([1, hidden_dim,  self.latent_dim], 'lrelu',
+        #              bias_before=bias_before, last_weight_is_zero_init=last_weight_is_zero_init)
+        # self.p = DNN([1, hidden_dim, self.latent_dim], 'lrelu',
+        #              bias_before=bias_before, last_weight_is_zero_init=last_weight_is_zero_init)
+        # embedding_dim = self.latent_dim
+        embedding_dim = self.latent_dim
+        # self.h0 = torch.nn.Parameter(torch.randn(1, hidden_dim))
+        self.h0 = torch.nn.Parameter(torch.zeros(1, hidden_dim))
+
+        # with torch.no_grad():
+        #     self.e.weight.data.zero_()
+        # self.e2l = DNN([embedding_dim+1, hidden_dim, hidden_dim, hidden_dim,  self.latent_dim], 'sin',
+        #              bias_before=bias_before, last_weight_is_zero_init=True)
+        self.blocks = nn.ModuleList(
+            [Block(i == 0, 2 * self.latent_dim, hidden_dim, 'sin', 1) for i in range(num_blocks)])
+
+        self.hh0x = torch.nn.Parameter(torch.randn(1, hidden_dim))
+        self.ex = torch.nn.Embedding(len(data.variables_hash), embedding_dim)
+        # with torch.no_grad():
+        #     xbound = 1 / embedding_dim
+        #     # xbound = bound / np.sqrt(T)
+        #     xbias = torch.empty((embedding_dim,))
+        #     init.uniform_(xbias, -xbound, xbound)
+        #     self.ex.weight.data = xbias.unsqueeze(0).repeat(self.ex.weight.data.shape[0], 1)
+
+        self.e2lsx = nn.ModuleList([Block(i == 0, embedding_dim + 1, hidden_dim, 'sin', 1) for i in range(5)])
+        self.llx = nn.Linear(hidden_dim, self.latent_dim)
+        self.llx.weight.data.zero_()
+        with torch.no_grad():
+            xbound = 1 / self.latent_dim
+            xbound = xbound / np.sqrt(100)
+            xbias = torch.empty((self.latent_dim,))
+            init.uniform_(xbias, -xbound, xbound)
+            self.llx.bias.data = xbias
+            init.normal_(self.llx.weight, 0, xbound * 0.1)
+            # init.normal_(self.llx.weight, 0, xbound * 1)
+
+        self.hh0t = torch.nn.Parameter(torch.randn(1, hidden_dim))
+        self.et = torch.nn.Embedding(len(data.variables_hash), embedding_dim)
+        # with torch.no_grad():
+        #     tbound = 1 / embedding_dim
+        #     # tbound = bound / np.sqrt(L)
+        #     tbias = torch.empty((embedding_dim,))
+        #     init.uniform_(tbias, -tbound, tbound)
+        #     self.et.weight.data = tbias.unsqueeze(0).repeat(self.et.weight.data.shape[0], 1)
+
+        self.e2lst = nn.ModuleList([Block(i == 0, embedding_dim + 1, hidden_dim, 'sin', 1) for i in range(5)])
+        self.llt = nn.Linear(hidden_dim, self.latent_dim)
+        self.llt.weight.data.zero_()
+        with torch.no_grad():
+            tbound = 1 / self.latent_dim
+            tbound = tbound / np.sqrt(100)
+            tbias = torch.empty((self.latent_dim,))
+            init.uniform_(tbias, -tbound, tbound)
+            self.llt.bias.data = tbias
+            init.normal_(self.llt.weight, 0, xbound * 0.1)
+            # init.normal_(self.llt.weight, 0, xbound * 1)
+        d = 2
+        self.extra_lins_zt = nn.Sequential(*[nn.Linear(self.latent_dim, self.latent_dim) for i in range(d)])
+        self.extra_lins_px = nn.Sequential(*[nn.Linear(self.latent_dim, self.latent_dim) for i in range(d)])
+
+        self.zt = None
+
+    def forward(self, x, variables, evx=None, evt=None):
+        x, t = x[:, [0]], x[:, [1]]
+        if evx is None:
+            if any(variables == -1):
+                mean_emb = self.ex.weight.sum(0)
+                index = variables == -1
+                variables[variables == -1] = 0  # set these to any value
+                evx = self.ex(variables)
+                evx[index] = mean_emb
+            else:
+                evx = self.ex(variables)
+        if evt is None:
+            evt = self.et(variables)
+
+        hhx = self.hh0x
+        for b in self.e2lsx:
+            hhx = b(hhx, torch.cat([evx, x], 1))
+        px = self.llx(hhx)
+        px = self.extra_lins_px(px)
+
+        # hhx_zero = self.hh0x
+        # for b in self.e2lsx:
+        #     hhx_zero = b(hhx_zero, torch.cat([evx, x[[0]].repeat(len(evx), 1)], 1))
+        # pxz_zero = self.llx(hhx)
+        # px = px - pxz_zero
+
+        hht = self.hh0t
+        for b in self.e2lst:
+            hht = b(hht, torch.cat([evt, t], 1))
+        zt = self.llt(hht)
+        zt = self.extra_lins_px(zt)
+
+        # hht_zero = self.hh0t
+        # for b in self.e2lst:
+        #     hht_zero = b(hht_zero, torch.cat([evt, t[[0]].repeat(len(evt), 1)], 1))
+        # zt_zero = self.llt(hht_zero)
+        # zt = zt - zt_zero
+
+        h = self.h0
+        for b in self.blocks:
+            h = b(h, zt, px)
+        ut = self.d(h)
+
+        self.zt, self.px = zt, px
+        self.prod = zt * px
+        self.t, self.x = t, x
+        self.evx = evx
+        self.evt = evt
+
+        return ut
+
+
+class SeparationDNNAAEmbedding(torch.nn.Module):
+    """Add central embedding to the main network"""
+    def __init__(self, data, use_batch_norm=False, use_instance_norm=False,
+                 entangling_method='product'):
+        super(SeparationDNNAAEmbedding, self).__init__()
+        self.entangling_method = entangling_method
         self.latent_dim = 2
         num_blocks = 4
         hidden_dim = 256
@@ -158,7 +298,9 @@ class SeparationDNNAA(torch.nn.Module):
         #              bias_before=bias_before, last_weight_is_zero_init=last_weight_is_zero_init)
         # embedding_dim = self.latent_dim
         embedding_dim = self.latent_dim
-        self.h0 = torch.nn.Parameter(torch.randn(1, hidden_dim))
+        # self.h0 = torch.nn.Parameter(torch.randn(1, hidden_dim))
+        self.h0 = torch.nn.Parameter(torch.zeros(1, hidden_dim))
+
         # with torch.no_grad():
         #     self.e.weight.data.zero_()
         # self.e2l = DNN([embedding_dim+1, hidden_dim, hidden_dim, hidden_dim,  self.latent_dim], 'sin',
@@ -168,15 +310,48 @@ class SeparationDNNAA(torch.nn.Module):
 
         self.hh0x = torch.nn.Parameter(torch.randn(1, hidden_dim))
         self.ex = torch.nn.Embedding(len(data.variables_hash), embedding_dim)
+        # with torch.no_grad():
+        #     xbound = 1 / embedding_dim
+        #     # xbound = bound / np.sqrt(T)
+        #     xbias = torch.empty((embedding_dim,))
+        #     init.uniform_(xbias, -xbound, xbound)
+        #     self.ex.weight.data = xbias.unsqueeze(0).repeat(self.ex.weight.data.shape[0], 1)
+
         self.e2lsx = nn.ModuleList([Block(i == 0, embedding_dim + 1, hidden_dim, 'sin', 1) for i in range(5)])
         self.llx = nn.Linear(hidden_dim, self.latent_dim)
         self.llx.weight.data.zero_()
+        with torch.no_grad():
+            xbound = 1 / self.latent_dim
+            xbound = xbound / np.sqrt(100)
+            xbias = torch.empty((self.latent_dim,))
+            init.uniform_(xbias, -xbound, xbound)
+            self.llx.bias.data = xbias
+            init.normal_(self.llx.weight, 0, xbound * 0.1)
+            # init.normal_(self.llx.weight, 0, xbound * 1)
 
         self.hh0t = torch.nn.Parameter(torch.randn(1, hidden_dim))
         self.et = torch.nn.Embedding(len(data.variables_hash), embedding_dim)
+        # with torch.no_grad():
+        #     tbound = 1 / embedding_dim
+        #     # tbound = bound / np.sqrt(L)
+        #     tbias = torch.empty((embedding_dim,))
+        #     init.uniform_(tbias, -tbound, tbound)
+        #     self.et.weight.data = tbias.unsqueeze(0).repeat(self.et.weight.data.shape[0], 1)
+
         self.e2lst = nn.ModuleList([Block(i == 0, embedding_dim + 1, hidden_dim, 'sin', 1) for i in range(5)])
         self.llt = nn.Linear(hidden_dim, self.latent_dim)
         self.llt.weight.data.zero_()
+        with torch.no_grad():
+            tbound = 1 / self.latent_dim
+            tbound = tbound / np.sqrt(100)
+            tbias = torch.empty((self.latent_dim,))
+            init.uniform_(tbias, -tbound, tbound)
+            self.llt.bias.data = tbias
+            init.normal_(self.llt.weight, 0, xbound * 0.1)
+            # init.normal_(self.llt.weight, 0, xbound * 1)
+        # d = 2
+        # self.extra_lins_zt = nn.Sequential(*[nn.Linear(self.latent_dim, self.latent_dim) for i in range(d)])
+        # self.extra_lins_px = nn.Sequential(*[nn.Linear(self.latent_dim, self.latent_dim) for i in range(d)])
 
         self.zt = None
 
@@ -198,6 +373,7 @@ class SeparationDNNAA(torch.nn.Module):
         for b in self.e2lsx:
             hhx = b(hhx, torch.cat([evx, x], 1))
         px = self.llx(hhx)
+        # px = self.extra_lins_px(px)
 
         # hhx_zero = self.hh0x
         # for b in self.e2lsx:
@@ -209,12 +385,13 @@ class SeparationDNNAA(torch.nn.Module):
         for b in self.e2lst:
             hht = b(hht, torch.cat([evt, t], 1))
         zt = self.llt(hht)
+        # zt = self.extra_lins_px(zt)
 
-        hht_zero = self.hh0t
-        for b in self.e2lst:
-            hht_zero = b(hht_zero, torch.cat([evt, t[[0]].repeat(len(evt), 1)], 1))
-        zt_zero = self.llt(hht_zero)
-        zt = zt - zt_zero
+        # hht_zero = self.hh0t
+        # for b in self.e2lst:
+        #     hht_zero = b(hht_zero, torch.cat([evt, t[[0]].repeat(len(evt), 1)], 1))
+        # zt_zero = self.llt(hht_zero)
+        # zt = zt - zt_zero
 
         h = self.h0
         for b in self.blocks:

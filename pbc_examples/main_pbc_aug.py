@@ -302,14 +302,14 @@ if args.optimizer_name != 'LBFGS':
 
             plt.clf()
             plt.subplot(1, 2, 1)
-            plt.title('zt')
+            plt.title(f'zt epoch{e}')
             for i, zt in enumerate(zts):
                 plt.scatter(zt[:, 0], zt[:, 1], c=model.dnn.t.squeeze().detach().cpu().numpy(),
                             label=' '.join([str(v) for v in variables[i]]),
                         cmap=cmaps[i], alpha=0.1)  # yellow: 1, blue:  0
             plt.legend()
             plt.subplot(1, 2, 2)
-            plt.title('px')
+            plt.title(f'px epoch{e}')
             for i, px in enumerate(pxs):
                 plt.scatter(px[:, 0], px[:, 1], c=model.dnn.x.squeeze().detach().cpu().numpy(),
                             label=' '.join([str(v) for v in variables[i]]),
@@ -333,7 +333,7 @@ if args.optimizer_name != 'LBFGS':
             T = torch.tensor(X_star[:, 1:2], requires_grad=True).float().to(device)
             u_pred = model.dnn(torch.cat([X, T], dim=1), None, evx=evx, evt=evt).reshape(100, 100).detach().cpu().numpy()
             # title ='swap: np.sin(2*x), beta 3'
-            title ='swap: np.sin(1*x), beta 4 nu 0'
+            title =f'swap: np.sin(1*x), beta 4 nu 0  epoch{e}'
             u_predict(None, u_pred, x, t, 'nu', 'beta', 'rho', args.seed, orig_layers, args.N_f, args.L, args.source,
                       args.lr,
                       'u0_str', 'system', path='path', prefix=title)
@@ -348,12 +348,43 @@ if args.optimizer_name != 'LBFGS':
             X = torch.tensor(X_star[:, 0:1], requires_grad=True).float().to(device)
             T = torch.tensor(X_star[:, 1:2], requires_grad=True).float().to(device)
             u_pred = model.dnn(torch.cat([X, T], dim=1), None, evx=evx, evt=evt).reshape(100, 100).detach().cpu().numpy()
-            title ='swap: np.sin(2*x), beta 1 nu 0'
+            title =f'swap: np.sin(2*x), beta 1 nu 0 epoch{e}'
             u_predict(None, u_pred, x, t, 'nu', 'beta', 'rho', args.seed, orig_layers, args.N_f, args.L, args.source,
                       args.lr,
                       'u0_str', 'system', path='path', prefix=title)
             plt.show()
+            if False:
+                # testing with random temporal dynamics in latent sapce
+                model.predict(X_star, [('convection', 0, 4, 0, 'np.sin(2*x)')])
+                evx = model.dnn.evx
+                # model.predict(X_star, [('convection', 0, 4, 0, 'np.sin(1*x)')])
+                model.predict(X_star, [('convection', 0, 1, 0, 'np.sin(1*x)')])
+                evt = torch.cat([T, T], -1)
+                # evt = model.dnn.evt
+                X = torch.tensor(X_star[:, 0:1], requires_grad=True).float().to(device)
+                T = torch.tensor(X_star[:, 1:2], requires_grad=True).float().to(device)
+                u_pred = model.dnn(torch.cat([X, T], dim=1), None, evx=evx, evt=evt).reshape(100, 100).detach().cpu().numpy()
+                title =f'swap: np.sin(2*x), random time direction epoch{e}'
+                u_predict(None, u_pred, x, t, 'nu', 'beta', 'rho', args.seed, orig_layers, args.N_f, args.L, args.source,
+                          args.lr,
+                          'u0_str', 'system', path='path', prefix=title)
+                plt.show()
 
+                # testing with sin(2x) but random spatial dynamics in latent sapce
+                # model.predict(X_star, [('convection', 0, 4, 0, 'np.sin(2*x)')])
+                # evx = model.dnn.evx
+                evx = torch.cat([X, X], -1) - np.pi / np.pi * 0.5
+                # model.predict(X_star, [('convection', 0, 4, 0, 'np.sin(1*x)')])
+                model.predict(X_star, [('convection', 0, 4, 0, 'np.sin(2*x)')])
+                evt = model.dnn.evt
+                X = torch.tensor(X_star[:, 0:1], requires_grad=True).float().to(device)
+                T = torch.tensor(X_star[:, 1:2], requires_grad=True).float().to(device)
+                u_pred = model.dnn(torch.cat([X, T], dim=1), None, evx=evx, evt=evt).reshape(100, 100).detach().cpu().numpy()
+                title =f'swap: np.sin(2*x), random space direction epoch{e}'
+                u_predict(None, u_pred, x, t, 'nu', 'beta', 'rho', args.seed, orig_layers, args.N_f, args.L, args.source,
+                          args.lr,
+                          'u0_str', 'system', path='path', prefix=title)
+                plt.show()
 
             # see interpolation capabilities
             # eval(system,  nu, beta, rho, 'interp', e=e)

@@ -43,7 +43,7 @@ def LBFGS(model_param,
     return optimizer
 
 
-def Adam(model_param, lr=1e-4, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False):
+def Adam(model_param, lr=1e-4, betas=(0.9, 0.999), eps=1e-08, weight_decay=1e-7, amsgrad=False):
 
     optimizer = torch.optim.Adam(
                 model_param,

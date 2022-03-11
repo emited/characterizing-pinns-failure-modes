@@ -83,6 +83,7 @@ def u_predict(u_vals, U_pred, x, t, nu, beta, rho, seed, layers, N_f, L, source,
     ax = fig.add_subplot(111)
     ax.set_title(prefix)
     # colorbar for prediction: set min/max to ground truth solution.
+    # U_pred.sum(1, keepdims=True).dot(U_pred.sum(0, keepdims=True))
     h = ax.imshow(U_pred.T, interpolation='nearest', cmap='rainbow',
                   extent=[t.min(), t.max(), x.min(), x.max()],
                   origin='lower', aspect='auto', vmin=U_pred.min().item(), vmax=U_pred.max().item())

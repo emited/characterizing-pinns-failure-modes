@@ -193,7 +193,7 @@ def eval(e=-1):
              f"_rho{rho}_Nf{args.N_f}_{orig_layers}_L{ args.L}_seed{args.seed}_source{args.source}" \
              f"_{args.u0_str}_lr{args.lr}.png"
         import matplotlib.pyplot as plt
-        if isinstance(model.dnn, SeparationDNN) or isinstance(model.dnn, SeparationDNNA):
+        if True:
             zt = model.dnn.zt.detach().cpu().numpy()
             px = model.dnn.px.detach().cpu().numpy()
             pr = model.dnn.prod.detach().cpu().numpy()
@@ -246,7 +246,7 @@ def eval(e=-1):
 
 if args.optimizer_name != 'LBFGS':
     for e in range(10000):
-        if e % 500 == 0:
+        if e % 50 == 0:
             eval(e)
         model.train()
 
