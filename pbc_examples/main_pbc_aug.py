@@ -161,12 +161,30 @@ set_seed(args.seed) # for weight initialization
 #                                     ('convection', 0, 5, 0),
 #                                     ]:
 # variables.append(*v)
+# variables = [
+#     ('convection', 0, 1, 0, 'np.sin(1*x)'),
+#     # ('convection-diffusion', 1, 2, 0, 'np.sin(1*x)'),
+#     ('convection', 0, 4, 0, 'np.sin(2*x)'),
+#     # ('convection', 0, 2, 0, 'np.sin(2*x)'),
+#           ]
+
 variables = [
-    ('convection', 0, 1, 0, 'np.sin(1*x)'),
-    # ('convection-diffusion', 1, 2, 0, 'np.sin(1*x)'),
-    ('convection', 0, 4, 0, 'np.sin(2*x)'),
+    # ('convection', 0, 2, 0, 'np.sin(2*x)'),
+    ('convection-diffusion', 1, 1, 0, 'np.sin(1*x)'),
+    # ('convection-diffusion', 1, 4, 0, 'np.sin(1*x)'),
+    # ('convection-diffusion', 2, 4, 0, 'np.sin(1*x)'),
+    # ('convection-diffusion', 2, 1, 0, 'np.sin(1*x)'),
+    # ('convection-diffusion', 1, 1, 0, 'np.sin(2*x)'),
+    # ('convection-diffusion', 1, 4, 0, 'np.sin(2*x)'),
+    ('convection-diffusion', 2, 4, 0, 'np.sin(2*x)'),
+    # ('convection-diffusion', 2, 1, 0, 'np.sin(2*x)'),
+
+
+    # ('convection', 0, 2, 0, 'np.sin(1*x)'),
+    # ('convection', 0, 4, 0, 'np.sin(2*x)'),
     # ('convection', 0, 2, 0, 'np.sin(2*x)'),
           ]
+
 
 data_list = [gen_data(*v) for v in variables]
 data = DataList(('system', 'nu', 'beta', 'rho', 'u0_str'), [Data(*data) for data in data_list])
@@ -231,7 +249,7 @@ def eval(variables, e=-1):
              f"_rho{rho}_Nf{args.N_f}_{orig_layers}_L{ args.L}_seed{args.seed}_source{args.source}" \
              f"_{u0_str}_lr{args.lr}.png"
         import matplotlib.pyplot as plt
-        title = f'u0_str:{u0_str}, {system}, beta: {beta}, epoch:{e}'
+        title = f'u0_str:{u0_str}, {system}, beta: {beta}, nu:{nu} epoch:{e}'
         if True:
             zt = model.dnn.zt.detach().cpu().numpy()
             px = model.dnn.px.detach().cpu().numpy()
@@ -306,14 +324,14 @@ if args.optimizer_name != 'LBFGS':
             for i, zt in enumerate(zts):
                 plt.scatter(zt[:, 0], zt[:, 1], c=model.dnn.t.squeeze().detach().cpu().numpy(),
                             label=' '.join([str(v) for v in variables[i]]),
-                        cmap=cmaps[i], alpha=0.1)  # yellow: 1, blue:  0
+                        cmap=cmaps[i], alpha=1)  # yellow: 1, blue:  0
             plt.legend()
             plt.subplot(1, 2, 2)
             plt.title(f'px epoch{e}')
             for i, px in enumerate(pxs):
                 plt.scatter(px[:, 0], px[:, 1], c=model.dnn.x.squeeze().detach().cpu().numpy(),
                             label=' '.join([str(v) for v in variables[i]]),
-                        cmap=cmaps[i], alpha=0.1)  # yellow: 1, blue:  0
+                        cmap=cmaps[i], alpha=1)  # yellow: 1, blue:  0
             plt.tight_layout()
             plt.legend()
             plt.show()
@@ -324,41 +342,44 @@ if args.optimizer_name != 'LBFGS':
             X_star = np.hstack((X.flatten()[:, None], T.flatten()[:, None]))  # all the x,t "test" data
 
             # model.predict(X_star, [('convection', 0, 1, 0, 'np.sin(2*x)')])
-            model.predict(X_star, [('convection', 0, 1, 0, 'np.sin(1*x)')])
+            model.predict(X_star, [('convection-diffusion', 1, 1, 0, 'np.sin(1*x)')])
             evx = model.dnn.evx
-            model.predict(X_star, [('convection', 0, 4, 0, 'np.sin(2*x)')])
+            model.predict(X_star, [('convection-diffusion', 2, 4, 0, 'np.sin(2*x)')])
             # model.predict(X_star, [('convection', 0, 3, 0, 'np.sin(1*x)')])
             evt = model.dnn.evt
             X = torch.tensor(X_star[:, 0:1], requires_grad=True).float().to(device)
             T = torch.tensor(X_star[:, 1:2], requires_grad=True).float().to(device)
             u_pred = model.dnn(torch.cat([X, T], dim=1), None, evx=evx, evt=evt).reshape(100, 100).detach().cpu().numpy()
             # title ='swap: np.sin(2*x), beta 3'
-            title =f'swap: np.sin(1*x), beta 4 nu 0  epoch{e}'
+            title =f'swap: np.sin(1*x), beta 4 nu 1  epoch{e}'
             u_predict(None, u_pred, x, t, 'nu', 'beta', 'rho', args.seed, orig_layers, args.N_f, args.L, args.source,
                       args.lr,
                       'u0_str', 'system', path='path', prefix=title)
             plt.show()
 
             # model.predict(X_star, [('convection', 0, 1, 0, 'np.sin(2*x)')])
-            model.predict(X_star, [('convection', 0, 4, 0, 'np.sin(2*x)')])
+            model.predict(X_star, [('convection-diffusion', 2, 4, 0, 'np.sin(2*x)')])
             evx = model.dnn.evx
             # model.predict(X_star, [('convection', 0, 4, 0, 'np.sin(1*x)')])
-            model.predict(X_star, [('convection', 0, 1, 0, 'np.sin(1*x)')])
+            model.predict(X_star, [('convection-diffusion', 1, 1, 0, 'np.sin(1*x)')])
             evt = model.dnn.evt
             X = torch.tensor(X_star[:, 0:1], requires_grad=True).float().to(device)
             T = torch.tensor(X_star[:, 1:2], requires_grad=True).float().to(device)
             u_pred = model.dnn(torch.cat([X, T], dim=1), None, evx=evx, evt=evt).reshape(100, 100).detach().cpu().numpy()
-            title =f'swap: np.sin(2*x), beta 1 nu 0 epoch{e}'
+            title =f'swap: np.sin(2*x), beta 1 nu 1 epoch{e}'
             u_predict(None, u_pred, x, t, 'nu', 'beta', 'rho', args.seed, orig_layers, args.N_f, args.L, args.source,
                       args.lr,
                       'u0_str', 'system', path='path', prefix=title)
             plt.show()
             if False:
+                #     ('convection', 0, 2, 0, 'np.sin(2*x)'),
+                #     ('convection-diffusion', 1, 2, 0, 'np.sin(1*x)'),
+
                 # testing with random temporal dynamics in latent sapce
-                model.predict(X_star, [('convection', 0, 4, 0, 'np.sin(2*x)')])
+                model.predict(X_star, [('convection-diffusion', 2, 4, 0, 'np.sin(2*x)')])
                 evx = model.dnn.evx
                 # model.predict(X_star, [('convection', 0, 4, 0, 'np.sin(1*x)')])
-                model.predict(X_star, [('convection', 0, 1, 0, 'np.sin(1*x)')])
+                model.predict(X_star, [('convection-diffusion', 1, 1, 0, 'np.sin(1*x)')])
                 evt = torch.cat([T, T], -1)
                 # evt = model.dnn.evt
                 X = torch.tensor(X_star[:, 0:1], requires_grad=True).float().to(device)
@@ -375,7 +396,7 @@ if args.optimizer_name != 'LBFGS':
                 # evx = model.dnn.evx
                 evx = torch.cat([X, X], -1) - np.pi / np.pi * 0.5
                 # model.predict(X_star, [('convection', 0, 4, 0, 'np.sin(1*x)')])
-                model.predict(X_star, [('convection', 0, 4, 0, 'np.sin(2*x)')])
+                model.predict(X_star, [('convection-diffusion', 2, 4, 0, 'np.sin(2*x)')])
                 evt = model.dnn.evt
                 X = torch.tensor(X_star[:, 0:1], requires_grad=True).float().to(device)
                 T = torch.tensor(X_star[:, 1:2], requires_grad=True).float().to(device)
