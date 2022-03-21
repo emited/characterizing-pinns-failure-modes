@@ -58,7 +58,7 @@ class SmallSine(nn.Module):
     def forward(self, input):
         # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
         # return torch.sin(10*input)
-        return torch.sin(input)
+        return torch.sin(1 * input)
 
 
 def get_activation(activation):

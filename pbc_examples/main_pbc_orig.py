@@ -2,15 +2,10 @@
 
 import argparse
 from net_pbc import *
-import numpy as np
 import os
-import random
-import torch
-from systems_pbc import *
-import torch.backends.cudnn as cudnn
+from pbc_examples.data.systems_pbc import *
 from utils import *
 from visualize import *
-import matplotlib.pyplot as plt
 
 ################
 # Arguments

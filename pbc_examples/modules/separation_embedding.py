@@ -9,19 +9,19 @@ from pbc_examples.net_pbc import SymmetricInitDNN, get_activation
 
 
 class Block(torch.nn.Module):
-    def __init__(self, is_first, embedding_dim, hidden_dim, activation, num_args=3, last_weight_is_zero_init=False, first_embedding_dim=-1,):
+    def __init__(self, is_first, emb_dim, hidden_dim, activation, num_args=3, last_weight_is_zero_init=False, first_emb_dim=-1,):
         super().__init__()
         self.hidden_dim = hidden_dim
-        self.embedding_dim = embedding_dim
+        self.emb_dim = emb_dim
         self.activation = activation
         self.is_first = is_first
 
-        self.lin_emb = nn.Linear(self.embedding_dim, 2 * self.hidden_dim)
+        self.lin_emb = nn.Linear(self.emb_dim, 2 * self.hidden_dim)
         self.lin = nn.Linear(self.hidden_dim, self.hidden_dim)
         if not self.is_first:
             self.prelin = nn.Linear(self.hidden_dim, self.hidden_dim)
         else:
-            self.prelin = nn.Linear(first_embedding_dim, self.hidden_dim)
+            self.prelin = nn.Linear(first_emb_dim, self.hidden_dim)
         # if last_weight_is_zero_init:
         #     with torch.no_grad():
         #         self.lin.weight.data.zero_()
@@ -65,34 +65,34 @@ class SeparationEmbedding(torch.nn.Module):
         #              bias_before=bias_before, last_weight_is_zero_init=last_weight_is_zero_init)
         # self.p = DNN([1, hidden_dim, self.latent_dim], 'lrelu',
         #              bias_before=bias_before, last_weight_is_zero_init=last_weight_is_zero_init)
-        # embedding_dim = self.latent_dim
-        embedding_dim = self.latent_dim
+        # emb_dim = self.latent_dim
+        emb_dim = self.latent_dim
         # self.h0 = torch.nn.Parameter(torch.randn(1, hidden_dim))
         # self.h0 = torch.nn.Parameter(torch.zeros(1, hidden_dim))
 
-        self.h0 = torch.nn.Parameter(torch.zeros(1, embedding_dim))
+        self.h0 = torch.nn.Parameter(torch.zeros(1, emb_dim))
 
         # with torch.no_grad():
         #     self.e.weight.data.zero_()
-        # self.e2l = DNN([embedding_dim+1, hidden_dim, hidden_dim, hidden_dim,  self.latent_dim], 'sin',
+        # self.e2l = DNN([emb_dim+1, hidden_dim, hidden_dim, hidden_dim,  self.latent_dim], 'sin',
         #              bias_before=bias_before, last_weight_is_zero_init=True)
         arg_dim = 2 * self.latent_dim
         self.blocks = nn.ModuleList(
-            [Block(i == 0, arg_dim, hidden_dim, 'sin', 1, first_embedding_dim=embedding_dim) for i in range(num_blocks)])
+            [Block(i == 0, arg_dim, hidden_dim, 'sin', 1, first_emb_dim=emb_dim) for i in range(num_blocks)])
 
         # self.hh0x = torch.nn.Parameter(torch.randn(1, hidden_dim))
-        self.ex = torch.nn.Embedding(num_samples, embedding_dim)
+        self.ex = torch.nn.Embedding(num_samples, emb_dim)
         self.ex.weight.data.zero_()
 
         # with torch.no_grad():
-        #     xbound = 1 / embedding_dim
+        #     xbound = 1 / emb_dim
         #     # xbound = bound / np.sqrt(T)
-        #     xbias = torch.empty((embedding_dim,))
+        #     xbias = torch.empty((emb_dim,))
         #     init.uniform_(xbias, -xbound, xbound)
         #     self.ex.weight.data = xbias.unsqueeze(0).repeat(self.ex.weight.data.shape[0], 1)
 
-        self.e2lsx = nn.ModuleList([Block(i == 0, embedding_dim + 1, hidden_dim, 'sin', 1,
-                                          first_embedding_dim=embedding_dim) for i in range(num_xt_blocks)])
+        self.e2lsx = nn.ModuleList([Block(i == 0, emb_dim + 1, hidden_dim, 'sin', 1,
+                                          first_emb_dim=emb_dim) for i in range(num_xt_blocks)])
         self.llx = nn.Linear(hidden_dim, self.latent_dim)
         # self.llx.weight.data.zero_()
         # self.llx.bias.data.zero_()
@@ -107,17 +107,17 @@ class SeparationEmbedding(torch.nn.Module):
             # init.normal_(self.llx.weight, 0, xbound * 1)
 
         # self.hh0t = torch.nn.Parameter(torch.randn(1, hidden_dim))
-        self.et = torch.nn.Embedding(num_samples, embedding_dim)
+        self.et = torch.nn.Embedding(num_samples, emb_dim)
         self.et.weight.data.zero_()
         # with torch.no_grad():
-        #     tbound = 1 / embedding_dim
+        #     tbound = 1 / emb_dim
         #     # tbound = bound / np.sqrt(L)
-        #     tbias = torch.empty((embedding_dim,))
+        #     tbias = torch.empty((emb_dim,))
         #     init.uniform_(tbias, -tbound, tbound)
         #     self.et.weight.data = tbias.unsqueeze(0).repeat(self.et.weight.data.shape[0], 1)
 
-        self.e2lst = nn.ModuleList([Block(i == 0, embedding_dim + 1, hidden_dim, 'sin', 1,
-                                          first_embedding_dim=embedding_dim) for i in range(num_xt_blocks)])
+        self.e2lst = nn.ModuleList([Block(i == 0, emb_dim + 1, hidden_dim, 'sin', 1,
+                                          first_emb_dim=emb_dim) for i in range(num_xt_blocks)])
         self.llt = nn.Linear(hidden_dim, self.latent_dim)
         # self.llt.weight.data.zero_()
         with torch.no_grad():
@@ -140,7 +140,7 @@ class SeparationEmbedding(torch.nn.Module):
             ex = self.ex(sample_index)
         if et is None:
             et = self.et(sample_index)
-        # ex : (B, embedding_dim)
+        # ex : (B, emb_dim)
         # x: (B, xgrid, 1)
         ex_broadcasted = ex.unsqueeze(1).expand(-1, x.shape[1], -1)
         hhx = ex_broadcasted

@@ -16,17 +16,17 @@ class SeparationParam(torch.nn.Module):
     def __init__(self, param_dim):
         super(SeparationParam, self).__init__()
         self.latent_dim = 2
-        num_blocks = 6
-        num_xt_blocks = 6
+        num_blocks = 4
+        num_xt_blocks = 2
         hidden_dim = 256
-        embedding_dim = self.latent_dim
+        emb_dim = self.latent_dim
 
         self.d = SymmetricInitDNN([hidden_dim, 1], "identity")
-        self.h0 = torch.nn.Parameter(torch.zeros(1, embedding_dim))
+        self.h0 = torch.nn.Parameter(torch.zeros(1, emb_dim))
         self.blocks = nn.ModuleList(
-            [Block(i == 0, 2 * self.latent_dim, hidden_dim, 'sin', 1, first_embedding_dim=embedding_dim) for i in range(num_blocks)])
+            [Block(i == 0, 2 * self.latent_dim, hidden_dim, 'sin', 1, first_emb_dim=emb_dim) for i in range(num_blocks)])
         self.e2lsx = nn.ModuleList([Block(i == 0, param_dim + 1, hidden_dim, 'sin', 1,
-                                          first_embedding_dim=param_dim) for i in range(num_xt_blocks)])
+                                          first_emb_dim=param_dim) for i in range(num_xt_blocks)])
         self.llx = nn.Linear(hidden_dim, self.latent_dim)
         # self.llx.weight.data.zero_()
         # self.llx.bias.data.zero_()
@@ -41,7 +41,7 @@ class SeparationParam(torch.nn.Module):
             # init.normal_(self.llx.weight, 0, xbound * 1)
 
         self.e2lst = nn.ModuleList([Block(i == 0, param_dim + 1, hidden_dim, 'sin', 1,
-                                          first_embedding_dim=param_dim) for i in range(num_xt_blocks)])
+                                          first_emb_dim=param_dim) for i in range(num_xt_blocks)])
         self.llt = nn.Linear(hidden_dim, self.latent_dim)
         # self.llt.weight.data.zero_()
         with torch.no_grad():
@@ -56,7 +56,7 @@ class SeparationParam(torch.nn.Module):
         self.zt = None
 
     def forward(self, x, t, param, ):
-        # ex : (B, embedding_dim)
+        # ex : (B, emb_dim)
         # x: (B, xgrid, 1)
         ex_broadcasted = param.unsqueeze(1).expand(-1, x.shape[1], -1)
         hhx = ex_broadcasted
