@@ -39,27 +39,36 @@ def plot_solution_1d(U_pred, x, t, ax=None, title=None):
     ax.tick_params(labelsize=15)
 
 
-def plot_latents(px, zt, x, t, labels=None):
+def plot_latents(px, zt, x, t, labels=None, use_cmaps=False):
     import matplotlib.pyplot as plt
     plt.figure(figsize=(18,6))
-    cmaps = ['Greys', 'Purples', 'Blues', 'Greens', 'Oranges', 'Reds',
-             'YlOrBr', 'YlOrRd', 'OrRd', 'PuRd', 'RdPu', 'BuPu',
-             'GnBu', 'PuBu', 'YlGnBu', 'PuBuGn', 'BuGn', 'YlGn']
-    cmaps = [c + '_r' for c in cmaps]
+    if use_cmaps:
+        cmaps = ['Greys', 'Purples', 'Blues', 'Greens', 'Oranges', 'Reds',
+                 'YlOrBr', 'YlOrRd', 'OrRd', 'PuRd', 'RdPu', 'BuPu',
+                 'GnBu', 'PuBu', 'YlGnBu', 'PuBuGn', 'BuGn', 'YlGn']
+        cmaps = [c + '_r' for c in cmaps]
     plt.subplot(1, 2, 1)
     plt.title(f'zt')
     for i, zti in enumerate(zt):
-        plt.scatter(zti[:, 0], zti[:, 1], c=t[i],
+        if use_cmaps:
+            kwargs = {'cmap': cmaps[i]}
+        else:
+            kwargs = {}
+        plt.scatter(zti[:, 0], zti[:, 1], i,
                 label=labels[i],
-                cmap=cmaps[i], alpha=1)  # yellow: 1, blue:  0
+                alpha=1, **kwargs)  # yellow: 1, blue:  0
     # plt.legend(bbox_to_anchor = (1.05, 0.6))
     plt.subplot(1, 2, 2)
 
     plt.title(f'px')
     for i, pxi in enumerate(px):
-        plt.scatter(pxi[:, 0], pxi[:, 1], c=x[i],
+        if use_cmaps:
+            kwargs = {'cmap': cmaps[i]}
+        else:
+            kwargs = {}
+        plt.scatter(pxi[:, 0], pxi[:, 1], i,
                 label=labels[i],
-                cmap=cmaps[i], alpha=1)  # yellow: 1, blue:  0
+                alpha=1, **kwargs)  # yellow: 1, blue:  0
     plt.legend(bbox_to_anchor = (1.05, 0.6))
     plt.tight_layout()
 

@@ -12,6 +12,7 @@ from pbc_examples.data.plot import plot_solution_1d, plot_latents
 from pbc_examples.modules.separation_embedding import SeparationEmbedding
 from pbc_examples.modules.separation_param import SeparationParam
 from pbc_examples.modules.separation_param_modulation import SeparationParamM
+from pbc_examples.modules.separation_param_modulation_big import SeparationParamMod
 
 
 def to_numpy(t):
@@ -23,11 +24,13 @@ class LitAutoEncoder(pl.LightningModule):
         super().__init__()
         # self.model = SeparationEmbedding(num_samples)
         # self.model = SeparationParam(1)
-        self.model = SeparationParamM(num_samples)
+        # self.model = SeparationParamM(num_samples)
+        self.model = SeparationParamMod(num_samples)
 
     def _get_aux_input(self, input):
         if isinstance(self.model, SeparationParam) or \
-            isinstance(self.model, SeparationParamM):
+            isinstance(self.model, SeparationParamM) or \
+            isinstance(self.model, SeparationParamMod):
             aux = input['params']
         elif isinstance(self.model, SeparationEmbedding):
             aux = input['item']
@@ -40,7 +43,7 @@ class LitAutoEncoder(pl.LightningModule):
         return output
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=0.002, weight_decay=1e-8)
+        optimizer = torch.optim.Adam(self.parameters(), lr=0.002, weight_decay=0)
         return optimizer
 
     def training_step(self, train_batch, batch_idx):
@@ -115,7 +118,7 @@ omega2p, p2omega = make_norm_denorm_fns(1, n)
 
 # params = np.hstack([omega2p(omegas), beta2p(betas)])
 params = np.array(list(itertools.product(omega2p(omegas), beta2p(betas))))
-data_args_list = [('convection', 0, p2beta(betap), 0, f'np.sin({p2omega(omegap)}*x)', 100, 100, 0)
+data_args_list = [('convection-diffusion', 1, p2beta(betap), 0, f'np.sin({p2omega(omegap)}*x)', 100, 100, 0)
                   for omegap, betap in params]
                   # for beta in betas]
 
