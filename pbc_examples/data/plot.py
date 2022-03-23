@@ -54,7 +54,7 @@ def plot_latents(px, zt, x, t, labels=None, use_cmaps=False):
             kwargs = {'cmap': cmaps[i]}
         else:
             kwargs = {}
-        plt.scatter(zti[:, 0], zti[:, 1], i,
+        plt.scatter(zti[:, 0], zti[:, 1], i+1,
                 label=labels[i],
                 alpha=1, **kwargs)  # yellow: 1, blue:  0
     # plt.legend(bbox_to_anchor = (1.05, 0.6))
@@ -66,7 +66,7 @@ def plot_latents(px, zt, x, t, labels=None, use_cmaps=False):
             kwargs = {'cmap': cmaps[i]}
         else:
             kwargs = {}
-        plt.scatter(pxi[:, 0], pxi[:, 1], i,
+        plt.scatter(pxi[:, 0], pxi[:, 1], i+1,
                 label=labels[i],
                 alpha=1, **kwargs)  # yellow: 1, blue:  0
     plt.legend(bbox_to_anchor = (1.05, 0.6))

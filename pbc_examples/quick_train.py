@@ -44,6 +44,11 @@ class LitAutoEncoder(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=0.002, weight_decay=0)
+        # optimizer = torch.optim.Adam([
+        #     {'params': self.model.xt_param_group, 'lr':0.002, 'weight_decay':0},
+        #     {'params': self.model.x_param_group, 'lr':0.002, 'weight_decay':0},
+        #     {'params': self.model.t_param_group, 'lr':0.002, 'weight_decay':0},
+        # ], lr=1e-3)
         return optimizer
 
     def training_step(self, train_batch, batch_idx):
@@ -109,19 +114,35 @@ def make_norm_denorm_fns(a, b):
         return y * (b - a) + a
     return renorm, denorm
 
-betas = np.linspace(0, 5, 5).astype(np.float32)
-beta2p, p2beta = make_norm_denorm_fns(0, 5)
 
-omegas = np.linspace(1, n, n).astype(np.float32)
-omega2p, p2omega = make_norm_denorm_fns(1, n)
+beta_min, beta_max = 0, 5
+betas = np.linspace(beta_min, beta_max, n).astype(np.float32)
+beta2p, p2beta = make_norm_denorm_fns(beta_min, beta_max)
+
+omega_min, omega_max = 1, n
+omegas = np.linspace(omega_min, omega_max, n).astype(np.float32)
+omega2p, p2omega = make_norm_denorm_fns(omega_min, omega_max)
+
+nu_min, nu_max = 0, 1
+nus = np.linspace(nu_min, nu_max, n).astype(np.float32)
+nu2p, p2nu = make_norm_denorm_fns(nu_min, nu_max)
 
 
-# params = np.hstack([omega2p(omegas), beta2p(betas)])
-params = np.array(list(itertools.product(omega2p(omegas), beta2p(betas))))
-data_args_list = [('convection-diffusion', 1, p2beta(betap), 0, f'np.sin({p2omega(omegap)}*x)', 100, 100, 0)
-                  for omegap, betap in params]
-                  # for beta in betas]
+params = np.hstack([omega2p(omegas), beta2p(betas)])
+params = np.array(list(itertools.product(omega2p(omegas), beta2p(betas), nu2p(nus))))
+data_args_list = [('convection-diffusion', p2nu(nup), p2beta(betap), 0, f'np.sin({p2omega(omegap)}*x)', 100, 100, 0)
+                  for omegap, betap, nup in params]
 
+# params = np.array([[-1, -1], [1, -1], [-1, 1], [1, 1]]).astype(np.float32)
+# data_args_list = [('convection', 0, 1, 0, f'np.sin({1}*x)', 100, 100, 0),
+#                   ('convection', 0, 4, 0, f'np.sin({1}*x)', 100, 100, 0),
+#                   ('convection', 0, 1, 0, f'np.sin({2}*x)', 100, 100, 0),
+#                   ('convection', 0, 4, 0, f'np.sin({2}*x)', 100, 100, 0),
+#                   ]
+
+
+# params = np.array([[0]])
+# data_args_list = [('convection', 0, 1, 0, 'np.exp(-np.power((x - 0.5*np.pi)/(np.pi/64), 2.)/2.)', 100, 100, 0),]
 
 dataset = SimplePDEDataset(data_args_list, params)
 train_loader = torch.utils.data.DataLoader(dataset, batch_size=len(dataset), num_workers=1)
