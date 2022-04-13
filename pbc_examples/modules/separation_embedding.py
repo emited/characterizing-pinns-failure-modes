@@ -1,8 +1,6 @@
 import math
-from collections import OrderedDict
-
 import torch
-from torch import nn, Tensor
+from torch import nn
 from torch.nn import init
 
 from pbc_examples.net_pbc import SymmetricInitDNN, get_activation
@@ -39,7 +37,11 @@ class Block(torch.nn.Module):
         return act
 
 
-class SeparationEmbedding(torch.nn.Module):
+class EmbeddingModule:
+    pass
+
+
+class SeparationEmbedding(torch.nn.Module, EmbeddingModule):
     """Add central embedding to the main network"""
     def __init__(self, num_samples):
         super(SeparationEmbedding, self).__init__()

@@ -37,9 +37,10 @@ def plot_solution_1d(U_pred, x, t, ax=None, title=None):
     )
 
     ax.tick_params(labelsize=15)
+    plt.tight_layout()
 
 
-def plot_latents(px, zt, x, t, labels=None, use_cmaps=False):
+def plot_latents(px, zt, x, t, labels=None, use_cmaps=False, prefix=None):
     import matplotlib.pyplot as plt
     plt.figure(figsize=(18,6))
     if use_cmaps:
@@ -48,7 +49,10 @@ def plot_latents(px, zt, x, t, labels=None, use_cmaps=False):
                  'GnBu', 'PuBu', 'YlGnBu', 'PuBuGn', 'BuGn', 'YlGn']
         cmaps = [c + '_r' for c in cmaps]
     plt.subplot(1, 2, 1)
-    plt.title(f'zt')
+    ttitle = 'zt'
+    if prefix is not None:
+        ttitle = prefix + ' ' + ttitle
+    plt.title(ttitle)
     for i, zti in enumerate(zt):
         if use_cmaps:
             kwargs = {'cmap': cmaps[i]}
@@ -56,11 +60,13 @@ def plot_latents(px, zt, x, t, labels=None, use_cmaps=False):
             kwargs = {}
         plt.scatter(zti[:, 0], zti[:, 1], i+1,
                 label=labels[i],
-                alpha=1, **kwargs)  # yellow: 1, blue:  0
+                alpha=0.3, **kwargs)  # yellow: 1, blue:  0
     # plt.legend(bbox_to_anchor = (1.05, 0.6))
     plt.subplot(1, 2, 2)
-
-    plt.title(f'px')
+    xtitle = f'px'
+    if prefix is not None:
+        xtitle = prefix + ' ' + xtitle
+    plt.title(xtitle)
     for i, pxi in enumerate(px):
         if use_cmaps:
             kwargs = {'cmap': cmaps[i]}

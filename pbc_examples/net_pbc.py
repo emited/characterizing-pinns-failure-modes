@@ -32,6 +32,16 @@ class LinearEstimator(nn.Module):
         return self.net(x) * self.factor
 
 
+
+class Cos(nn.Module):
+    def __init(self):
+        super().__init__()
+
+    def forward(self, input):
+        # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
+        return torch.cos(input)
+        # return torch.sin(input)
+
 class Sine(nn.Module):
     def __init(self):
         super().__init__()
@@ -58,7 +68,7 @@ class SmallSine(nn.Module):
     def forward(self, input):
         # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
         # return torch.sin(10*input)
-        return torch.sin(1 * input)
+        return torch.sin(10 * input)
 
 
 def get_activation(activation):
@@ -72,6 +82,8 @@ def get_activation(activation):
         return torch.nn.GELU
     elif activation == 'sin':
         return Sine
+    elif activation == 'cos':
+        return Cos
     elif activation == 'exp':
         return Exp
     elif activation == 'smallsin':
@@ -102,7 +114,7 @@ class LinearBiasBefore(nn.Linear):
 
 # the deep neural network
 class DNN(torch.nn.Module):
-    def __init__(self, layers, activation, use_batch_norm=False, use_instance_norm=False, bias_before=False, last_weight_is_zero_init=True):
+    def __init__(self, layers, activation, use_batch_norm=False, use_instance_norm=False, bias_before=False, last_weight_is_zero_init=False):
         super(DNN, self).__init__()
 
         # parameters

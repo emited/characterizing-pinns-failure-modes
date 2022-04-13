@@ -1,24 +1,21 @@
-import math
-from collections import OrderedDict
-
 import torch
-from torch import nn, Tensor
-from torch.nn import init
+from torch import nn
 
 from pbc_examples.modules.separation_embedding import Block
+from pbc_examples.modules.separation_param import ParamModule
 from pbc_examples.net_pbc import SymmetricInitDNN
 
 
 
 
-class SeparationParamM(torch.nn.Module):
+class SeparationParamM(torch.nn.Module, ParamModule):
     """Add central embedding to the main network"""
     def __init__(self, param_dim):
         super(SeparationParamM, self).__init__()
-        self.latent_dim = 2
-        num_blocks = 6
-        num_xt_blocks = 6
-        hidden_dim = 256
+        self.latent_dim = 128
+        num_blocks = 4
+        num_xt_blocks = 4
+        hidden_dim = 128
 
         self.d = SymmetricInitDNN([hidden_dim, 1], "identity")
         self.h0 = torch.nn.Parameter(torch.zeros(1, hidden_dim))

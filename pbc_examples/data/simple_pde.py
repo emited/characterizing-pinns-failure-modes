@@ -73,7 +73,10 @@ def gen_simple_pde_data(system, nu, beta, rho, u0_str, xgrid, nt, source, T=1, )
 
 
 class SimplePDEDataset(data.Dataset):
-    def __init__(self, data_args_list, params=None):
+    """
+    data_args_list: list of (system, nu, beta, rho, u0_str, xgrid, nt, source, T=1,)
+    """
+    def __init__(self, data_args_list, params=None,):
         self.data_args_list = data_args_list
         self.data_list = [gen_simple_pde_data(*args) for args in self.data_args_list]
         self.params = params
@@ -81,7 +84,12 @@ class SimplePDEDataset(data.Dataset):
     def __getitem__(self, item_index):
         item = {**self.data_list[item_index], 'item': item_index}
         if self.params is not None:
-            item['params'] = self.params[item_index]
+            if 'x_params' in self.params:
+                item['x_params'] = self.params['x_params'][item_index]
+            if 't_params' in self.params:
+                item['t_params'] = self.params['t_params'][item_index]
+            if 'params' in self.params:
+                item['params'] = self.params[item_index]
         return item
 
     def __len__(self):

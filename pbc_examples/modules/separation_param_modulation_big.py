@@ -1,83 +1,56 @@
-import math
 import torch
-from torch import nn, Tensor
-from torch.nn import init
+from torch import nn
 
-from pbc_examples.net_pbc import SymmetricInitDNN, get_activation, DNN
-
-
-class LowRankLinear():
-    def __init__(self):
-        pass
-    def forward(self, x):
-        pass
-
-class BlockMod(torch.nn.Module):
-    def __init__(self, emb_dim, hidden_dim, activation):
-        super().__init__()
-        self.hidden_dim = hidden_dim
-        self.emb_dim = emb_dim
-        self.activation = activation
+from pbc_examples.modules.blockmod import BlockMod
+from pbc_examples.modules.separation_param import ParamModule
+from pbc_examples.net_pbc import SymmetricInitDNN
 
 
-        self.lin_emb = nn.Linear(self.emb_dim, 3 * self.hidden_dim)
-        self.lin = nn.Linear(self.hidden_dim, self.hidden_dim)
-        self.prelin = nn.Linear(self.hidden_dim, self.hidden_dim)
-        # if last_weight_is_zero_init:
-        #     with torch.no_grad():
-        #         self.lin.weight.data.zero_()
 
-        self.activation = get_activation(activation)()
-
-    def forward(self, h, x):
-        params = self.lin_emb(x)
-        scale, shift, mod = params[..., :self.hidden_dim],\
-                            params[..., self.hidden_dim: 2 * self.hidden_dim],\
-                            params[..., 2 * self.hidden_dim:]
-        # self.lin.weight = self.lin.weight / self.lin.weight.sum(1, keepdim=True)
-        preact = self.lin(h * scale + shift)
-        act = self.activation(preact)
-        linact = self.lin(act)
-        assert mod.shape == linact.shape
-        postact = torch.sigmoid(mod) * linact
-        return postact
-
-
-class SeparationParamMod(torch.nn.Module):
+class SeparationParamMod(torch.nn.Module, ParamModule):
     """Multiplying activations by space-time dependant scalars"""
-    def __init__(self, param_dim):
+    def __init__(self, param_dim=None, x_param_dim=None, t_param_dim=None, separate_params=False):
         super(SeparationParamMod, self).__init__()
-        self.latent_dim = 32
+        self.separate_params = separate_params
+        self.param_dim = param_dim
+        self.x_param_dim = x_param_dim
+        self.t_param_dim = t_param_dim
+        self.latent_dim = 128
+        emb_dim = 128
+        num_blocks = 4
+        num_xt_blocks = 4
+        hidden_dim = 128
 
-        num_blocks = 6
-        num_xt_blocks = 6
-        hidden_dim = 32
+        if not self.separate_params:
+            self.p2e = SymmetricInitDNN([param_dim, hidden_dim, emb_dim, ], 'sin',)
+            self.e2ex = nn.Linear(emb_dim, emb_dim)
+            self.e2et = nn.Linear(emb_dim, emb_dim)
+        else:
+            self.xp2ex = SymmetricInitDNN([x_param_dim, hidden_dim, emb_dim, ], 'sin',)
+            self.tp2et = SymmetricInitDNN([t_param_dim, hidden_dim, emb_dim, ], 'sin',)
 
-
-        self.p2h = DNN([param_dim, hidden_dim, ], 'smallsin',  last_weight_is_zero_init=False)
-
-        self.d = SymmetricInitDNN([hidden_dim, 1], "identity")
-        self.p2hx = nn.Linear(hidden_dim, hidden_dim)
-        self.p2ht = nn.Linear(hidden_dim, hidden_dim)
         self.h0 = torch.nn.Parameter(torch.zeros(1, hidden_dim))
         self.hx0 = torch.nn.Parameter(torch.zeros(1, hidden_dim))
         self.ht0 = torch.nn.Parameter(torch.zeros(1, hidden_dim))
         self.blocks = nn.ModuleList(
             [BlockMod(2 * self.latent_dim, hidden_dim, 'sin',)
+            # [BlockMod(2 * self.latent_dim, hidden_dim, ['sin', 'exp'], [1, 1])
              for _ in range(num_blocks)])
         self.e2lsx = nn.ModuleList(
-            [BlockMod(hidden_dim + 1, hidden_dim, 'smallsin',)
+            # [BlockMod(hidden_dim + 1, hidden_dim, ['smallsin', 'exp'],)
+            [BlockMod(emb_dim + 1, hidden_dim, 'sin',)
              for _ in range(num_xt_blocks)])
-        self.llx = nn.Linear(hidden_dim, self.latent_dim)
-        # self.llx = SymmetricInitDNN([hidden_dim, self.latent_dim], "identity")
+        # self.llx = nn.Linear(hidden_dim, self.latent_dim)
+        self.llx = SymmetricInitDNN([hidden_dim, self.latent_dim], "identity")
 
         self.e2lst = nn.ModuleList(
-            [BlockMod(hidden_dim + 1, hidden_dim, 'smallsin')
+            [BlockMod(emb_dim + 1, hidden_dim, 'sin',)
+            # [BlockMod(hidden_dim + 1, hidden_dim, ['smallsin', 'exp'])
              for _ in range(num_xt_blocks)])
-        self.llt = nn.Linear(hidden_dim, self.latent_dim)
+        # self.llt = nn.Linear(hidden_dim, self.latent_dim)
         # self.llt.weight.data.zero_()
-        # self.llt = SymmetricInitDNN([hidden_dim, self.latent_dim], "identity")
-        self.zt = None
+        self.llt = SymmetricInitDNN([hidden_dim, self.latent_dim], "identity")
+        self.d = SymmetricInitDNN([hidden_dim, 1], "identity")
 
         # self.x_param_group = [self.hx0]
         # self.x_param_group.extend(self.e2lsx.parameters())
@@ -88,30 +61,57 @@ class SeparationParamMod(torch.nn.Module):
         # self.xt_param_group = [self.h0]
         # self.xt_param_group.extend(self.blocks.parameters())
         # self.xt_param_group.extend(self.d.parameters())
-        # self.xt_param_group = self.h0
 
     def forward(self, x, t, param, ):
         # ex : (B, emb_dim)
         # x: (B, xgrid, 1)
 
         # (B, emb_dim) -> (B, X, emb_dim)
+        # if self.separate_params:
+        #     assert param.shape[1] == 2
+        #     xparam = param[:, 0]
+        #     tparam = param[:, 1]
+        # else:
+        #     xparam = tparam = param
 
-        param = self.p2h(param)
-        paramx = self.p2hx(param)
-        ex_broadcasted = paramx.unsqueeze(1).expand(-1, x.shape[1], -1)
+        if self.separate_params:
+            xparam, tparam = param['x_params'], param['t_params']
+        else:
+            xparam = tparam = param
+
+
+        # hparam = hparam * hparam
+        if not self.separate_params:
+            e = self.p2e(param)
+            ex = self.e2ex(e)
+        else:
+            ex = self.xp2ex(xparam)
+
+        # ex = ex * ex
+
+        ex_broadcasted = ex.unsqueeze(1).expand(-1, x.shape[1], -1)
         # (1, hidden_dim) -> (1, X, hidden_dim)
         hhx = self.hx0.unsqueeze(1).expand(-1, x.shape[1], -1)
         for b in self.e2lsx:
             hhx = b(hhx, torch.cat([ex_broadcasted, x], -1))
         px = self.llx(hhx)
+        # px = px * px
 
         # (B, emb_dim) -> (B, T, emb_dim)
-        paramt = self.p2ht(param)
-        et_broadcasted = paramt.unsqueeze(1).expand(-1, t.shape[1], -1)
+        if not self.separate_params:
+            e = self.p2e(param)
+            et = self.e2et(e)
+        else:
+            et = self.tp2et(tparam)
+        # et = et * et
+
+        # htparam = self.hp2ht(tparam)
+        et_broadcasted = et.unsqueeze(1).expand(-1, t.shape[1], -1)
         hht = self.ht0.unsqueeze(1).expand(-1, t.shape[1], -1)
         for b in self.e2lst:
             hht = b(hht, torch.cat([et_broadcasted, t], -1))
         zt = self.llt(hht)
+        # zt = zt * zt
 
         zt_broadcasted = zt.unsqueeze(2).expand(-1, -1, px.shape[1], -1)
         px_broadcasted = px.unsqueeze(1).expand(-1, zt.shape[1], -1, -1)
