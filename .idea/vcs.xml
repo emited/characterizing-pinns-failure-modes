@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="$PROJECT_DIR$" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/constrained-hamiltonian-neural-networks" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/lnn" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/lnns" vcs="Git" />
+  </component>
+</project>
