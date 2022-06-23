@@ -118,6 +118,12 @@ class SeparationExperiment(pl.LightningModule):
 
     def _plot_latents(self, input, output):
         if 'px' in output and 'zt' in output:
+            if 'system' not in input:
+                input['system'] = [''] * len(input['item'])
+                input['beta'] = [''] * len(input['item'])
+                input['nu'] = [''] * len(input['item'])
+                input['u0_str'] = [''] * len(input['item'])
+
             plot_latents(
                 to_numpy(output['px']), to_numpy(output['zt']),
                 to_numpy(input['x']).squeeze(),

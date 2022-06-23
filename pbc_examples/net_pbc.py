@@ -225,27 +225,37 @@ class SymmetricInitDNN(DNN):
 #         return ut
 
 class EulerNet(nn.Module):
-    def __init__(self, latent_dim, dt=1/15, steps=1):
+    def __init__(self, latent_dim, hidden_dim, dt=1., steps=1, use_aux=True, aux_dim=0):
         super(EulerNet, self).__init__()
+        assert (aux_dim > 0 and use_aux) or (aux_dim == 0 and not use_aux)
+        self.use_aux = use_aux
         self.dt = dt
         self.steps = steps
-        self.x0 = nn.Parameter(torch.zeros(1, latent_dim))
-        self.vel = DNN([latent_dim, 256, latent_dim], 'sin',
+        self.vel = DNN([latent_dim + aux_dim, hidden_dim, latent_dim], 'sin',
                        last_weight_is_zero_init=True)
 
-    def forward(self, t):
-        x = self.x0
+    def forward(self, t, aux=None, x0=None):
+        # assert self.use_aux is True == aux is None
+        if x0 is None:
+            x = self.x0
+        else:
+            x = x0
         xs = {0: x}
-        t_max = t.max().item()
+        # t_max = t.max().item()
         t_unique = torch.unique(t).sort()[0]
         # n = round(t_max / self.dt)
         for ti in t_unique:
             # if self.training():
-            x = x + 0.1 * self.vel(x)
+            for s in range(self.steps):
+                if self.use_aux:
+                    v = self.vel(torch.cat([x, aux], -1))
+                else:
+                    v = self.vel(x)
+                x = x + 0.1 * v
             # else:
             #     x =
             xs[ti.item()] = x
-        out =  torch.concat([xs[ti.item()] for ti in t], 0)
+        out =  torch.stack([xs[ti.item()] for ti in t[0]], 1)
         return out
 
 
@@ -445,8 +455,10 @@ class PhysicsInformedNN_pbc():
         self.t_bc_ub = torch.tensor(bc_ub[:, 1:2], requires_grad=True).float().to(device)
         self.net = net
 
-        self.u_star = torch.tensor(u_star).float().to(device) # for regression to the solution directly
-        self.X_star = torch.tensor(X_star).float().to(device)
+        if u_star is not None:
+            self.u_star = torch.tensor(u_star).float().to(device) # for regression to the solution directly
+        if X_star is not None:
+            self.X_star = torch.tensor(X_star).float().to(device)
 
         if self.net == 'DNN':
             # self.dnn = LatentDNN(layers, activation).to(device)

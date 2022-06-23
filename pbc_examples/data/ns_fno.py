@@ -53,7 +53,7 @@ def ns_fno_dataset(n=None, timelen=10, train=True, startfrom=0):
     reader = MatReader(PATH)
     # train_a = reader.read_field('u')[:ntrain,::sub,::sub,:T_in]
     train_u = reader.read_field('u')[startfrom : n + startfrom, ::sub, ::sub, T_in : T + T_in]
-
+    # train_u = train_u.float()
     assert (S == train_u.shape[-2])
     assert (T == train_u.shape[-1])
 
@@ -72,18 +72,18 @@ class ImplicitWrapper(data.Dataset):
 
     def __getitem__(self, index):
         u, = self.dataset[index]
-        return {'u': u.permute(2, 0, 1),
+        return {'u': u.permute(2, 0, 1).unsqueeze(-1),
                 'item': index,
                 'mgrid': self.mgrid, **self.grids}
 
 
-def NSDataset():
-    ns_dataset = ns_fno_dataset()
+def NSDataset(*args, **kwargs):
+    ns_dataset = ns_fno_dataset(*args, **kwargs)
     nx, nt = ns_dataset[0][0].shape[-2:]
     return ImplicitWrapper(ns_dataset,
-                           coords_args=(('x', np.linspace(-1, 1, nx)),
-                                        ('y', np.linspace(-1, 1, nx)),
-                                        ('t', np.linspace(0, 1, nt))))
+                           coords_args=(('x', np.linspace(-1, 1, nx).astype(np.float32)),
+                                        ('y', np.linspace(-1, 1, nx).astype(np.float32)),
+                                        ('t', np.linspace(0, 1, nt).astype(np.float32))))
 
 
 if __name__ == '__main__':

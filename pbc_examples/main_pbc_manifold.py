@@ -1,7 +1,7 @@
 """Run PINNs for convection/reaction/reaction-diffusion with periodic boundary conditions."""
 
 import argparse
-from net_pbc import *
+from net_pbc_manifold import *
 import os
 from pbc_examples.data.systems_pbc import *
 from utils import *
@@ -112,7 +112,6 @@ bc_ub = np.hstack((x_bc_ub, t))
 u_train = uu1 # just the initial condition
 X_u_train = xx1 # (x,t) for initial condition
 
-layers.insert(0, X_u_train.shape[-1])
 
 ############################
 # Train the model
@@ -120,34 +119,53 @@ layers.insert(0, X_u_train.shape[-1])
 
 set_seed(args.seed) # for weight initialization
 
-model = PhysicsInformedNN_pbc(args.system, X_u_train, u_train, X_f_train, bc_lb, bc_ub, layers, G, nu, beta, rho,
-                            args.optimizer_name, args.lr, args.net, args.L, args.activation, args.loss_style)
-model.train()
+# sample z
+nz = 12
+zdim = 6
+z = torch.randn(nz, zdim)
+z = torch.clip(z, -3, 3)
 
-u_pred = model.predict(X_star)
+layers.insert(0, X_u_train.shape[-1] + zdim)
+
+model = PhysicsInformedNN_pbc(args.system, X_u_train, u_train, X_f_train, bc_lb, bc_ub, layers, G, nu, beta, rho,
+                            args.optimizer_name, args.lr, args.net, args.L, args.activation, args.loss_style, UB=0, z=z)
+
+if args.optimizer_name != 'LBFGS':
+    for e in range(2000):
+        model.train()
+else:
+    model.train()
+u_pred = model.predict(X_star, z=z)
 
 import matplotlib.pyplot as plt
-zt = model.dnn.zt.detach().cpu().numpy()
-plt.scatter(zt[:, 0], zt[:, 1], c=np.linspace(0, 1, len(zt))) # yellow: 1, blue:  0
-plt.show()
+# zt = model.dnn.zt.detach().cpu().numpy()
+# plt.scatter(zt[:, 0], zt[:, 1], c=np.linspace(0, 1, len(zt))) # yellow: 1, blue:  0
+# plt.show()
 
-error_u_relative = np.linalg.norm(u_star-u_pred, 2)/np.linalg.norm(u_star, 2)
-error_u_abs = np.mean(np.abs(u_star - u_pred))
-error_u_linf = np.linalg.norm(u_star - u_pred, np.inf)/np.linalg.norm(u_star, np.inf)
-
-print('Error u rel: %e' % (error_u_relative))
-print('Error u abs: %e' % (error_u_abs))
-print('Error u linf: %e' % (error_u_linf))
+# error_u_relative = np.linalg.norm(u_star-u_pred, 2)/np.linalg.norm(u_star, 2)
+# error_u_abs = np.mean(np.abs(u_star - u_pred))
+# error_u_linf = np.linalg.norm(u_star - u_pred, np.inf)/np.linalg.norm(u_star, np.inf)
+#
+# print('Error u rel: %e' % (error_u_relative))
+# print('Error u abs: %e' % (error_u_abs))
+# print('Error u linf: %e' % (error_u_linf))
 
 if args.visualize:
     path = f"heatmap_results/{args.system}"
     if not os.path.exists(path):
         os.makedirs(path)
-    u_pred = u_pred.reshape(len(t), len(x))
-    exact_u(Exact, x, t, nu, beta, rho, orig_layers, args.N_f, args.L, args.source, args.u0_str, args.system, path=path)
-    u_diff(Exact, u_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr, args.u0_str, args.system, path=path)
-    u_predict(u_vals, u_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr, args.u0_str, args.system, path=path)
+    u_pred = u_pred.reshape(-1, len(t), len(x))
+    # exact_u(Exact, x, t, nu, beta, rho, orig_layers, args.N_f, args.L, args.source, args.u0_str, args.system, path=path)
+    # plt.show()
+    # plt.clf()
 
+    # u_diff(Exact, u_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr, args.u0_str, args.system, path=path)
+    # plt.show()
+    # plt.clf()
+    for u_pred_z in u_pred:
+        u_predict(u_vals, u_pred_z, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr, args.u0_str, args.system, path=path, prefix='u_pred')
+        plt.show()
+        plt.clf()
 if args.save_model: # whether or not to save the model
     path = "saved_models"
     if not os.path.exists(path):
