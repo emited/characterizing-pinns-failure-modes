@@ -120,10 +120,11 @@ X_u_train = xx1 # (x,t) for initial condition
 set_seed(args.seed) # for weight initialization
 
 # sample z
-nz = 12
-zdim = 6
+nz = 64
+zdim = 4
 z = torch.randn(nz, zdim)
-z = torch.clip(z, -3, 3)
+# z = torch.clip(z, -3, 3)
+# z = None
 
 layers.insert(0, X_u_train.shape[-1] + zdim)
 
@@ -131,8 +132,24 @@ model = PhysicsInformedNN_pbc(args.system, X_u_train, u_train, X_f_train, bc_lb,
                             args.optimizer_name, args.lr, args.net, args.L, args.activation, args.loss_style, UB=0, z=z)
 
 if args.optimizer_name != 'LBFGS':
-    for e in range(2000):
-        model.train()
+    for e in range(20000):
+        if e != 0:
+            model.z = torch.randn(nz, zdim, device=device)
+            model.train()
+
+        if e % 500 == 0:
+            z = torch.randn(nz, zdim)
+            u_pred = model.predict(X_star, z=z)
+            if args.visualize:
+                path = f"heatmap_results/{args.system}"
+                u_pred = u_pred.reshape(-1, len(t), len(x))
+                for i, u_pred_z in enumerate(u_pred):
+                    if i > 5:
+                        break
+                    u_predict(u_vals, u_pred_z, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr, args.u0_str, args.system, path=path, prefix=f'u_pred_{e}')
+                    plt.show()
+                    plt.clf()
+
 else:
     model.train()
 u_pred = model.predict(X_star, z=z)

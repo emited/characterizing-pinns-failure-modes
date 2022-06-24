@@ -6,7 +6,7 @@ import numpy as np
 from choose_optimizer import *
 
 # CUDA support
-from pbc_examples.net_pbc import Sine
+from pbc_examples.net_pbc import Sine, SymmetricInitDNN
 
 if torch.cuda.is_available():
     device = torch.device('cuda')
@@ -58,10 +58,10 @@ class DNN(torch.nn.Module):
         def init_weights(m):
             if isinstance(m, nn.Linear):
                 # torch.nn.init.orthogonal_(m.weight, gain=1.)
-                torch.nn.init.xavier_uniform_(m.weight, gain=1.)
-                m.bias.data.fill_(0.)
-                # gain = 1
-                # torch.nn.init.uniform_(m.bias.data, a=-gain, b=gain)
+                torch.nn.init.xavier_uniform_(m.weight, gain=3.)
+                # m.bias.data.fill_(0.)
+                gain = 1
+                torch.nn.init.uniform_(m.bias.data, a=-gain, b=gain)
         self.layers.apply(init_weights)
 
     def forward(self, x):
@@ -73,20 +73,45 @@ class PhysicsInformedNN_pbc():
     def __init__(self, system, X_u_train, u_train, X_f_train, bc_lb, bc_ub, layers, G, nu, beta, rho, optimizer_name, lr,
         net, L=1, activation='tanh', loss_style='mean', UB=1, z=None):
 
-        self.system = system
         self.z = z.to(device)
-        self.x_u = torch.tensor(X_u_train[:, 0:1], requires_grad=True).float().to(device)
-        self.t_u = torch.tensor(X_u_train[:, 1:2], requires_grad=True).float().to(device)
-        self.x_f = torch.tensor(X_f_train[:, 0:1], requires_grad=True).float().to(device)
-        self.t_f = torch.tensor(X_f_train[:, 1:2], requires_grad=True).float().to(device)
-        self.x_bc_lb = torch.tensor(bc_lb[:, 0:1], requires_grad=True).float().to(device)
-        self.t_bc_lb = torch.tensor(bc_lb[:, 1:2], requires_grad=True).float().to(device)
-        self.x_bc_ub = torch.tensor(bc_ub[:, 0:1], requires_grad=True).float().to(device)
-        self.t_bc_ub = torch.tensor(bc_ub[:, 1:2], requires_grad=True).float().to(device)
+        self.system = system
+        self.x_f = torch.tensor(X_f_train[:, 0:1]).float().to(device)
+        self.t_f = torch.tensor(X_f_train[:, 1:2]).float().to(device)
+        self.x_u = torch.tensor(X_u_train[:, 0:1]).float().to(device)
+        self.t_u = torch.tensor(X_u_train[:, 1:2]).float().to(device)
+        self.x_bc_lb = torch.tensor(bc_lb[:, 0:1]).float().to(device)
+        self.t_bc_lb = torch.tensor(bc_lb[:, 1:2]).float().to(device)
+        self.x_bc_ub = torch.tensor(bc_ub[:, 0:1]).float().to(device)
+        self.t_bc_ub = torch.tensor(bc_ub[:, 1:2]).float().to(device)
+        if z is not None:
+            # self.z_f = self.z.unsqueeze(1).expand(-1, X_f_train.shape[0], -1)
+            # self.z_u = self.z.unsqueeze(1).expand(-1, X_u_train.shape[0], -1)
+            # self.z_bc_ub = z.unsqueeze(1).expand(-1, self.x_bc_ub.shape[0], -1)
+            # self.z_bc_lb = z.unsqueeze(1).expand(-1, self.t_bc_ub.shape[0], -1)
+            self.x_f = self.x_f.unsqueeze(0).expand(z.shape[0], -1, -1)
+            self.t_f = self.t_f.unsqueeze(0).expand(z.shape[0], -1, -1)
+            self.x_u = self.x_u.unsqueeze(0).expand(z.shape[0], -1, -1)
+            self.t_u = self.t_u.unsqueeze(0).expand(z.shape[0], -1, -1)
+            self.x_bc_lb = self.x_bc_lb.unsqueeze(0).expand(z.shape[0], -1, 1)
+            self.t_bc_lb = self.t_bc_lb.unsqueeze(0).expand(z.shape[0], -1, 1)
+            self.x_bc_ub = self.x_bc_ub.unsqueeze(0).expand(z.shape[0], -1, 1)
+            self.t_bc_ub = self.t_bc_ub.unsqueeze(0).expand(z.shape[0], -1, 1)
+
+        self.x_f.requires_grad = True
+        self.t_f.requires_grad = True
+        self.x_u.requires_grad = True
+        self.t_u.requires_grad = True
+        self.x_bc_lb.requires_grad = True
+        self.t_bc_lb.requires_grad = True
+        self.x_bc_ub.requires_grad = True
+        self.t_bc_ub.requires_grad = True
+
+
         self.net = net
 
         if self.net == 'DNN':
             self.dnn = DNN(layers, activation).to(device)
+            # self.dnn = SymmetricInitDNN(layers, activation).to(device)
         else: # "pretrained" can be included in model path
             # the dnn is within the PINNs class
             self.dnn = torch.load(net).dnn
@@ -112,20 +137,39 @@ class PhysicsInformedNN_pbc():
 
         self.iter = 0
 
+    @property
+    def z_f(self):
+        z_f = self.z.unsqueeze(1).expand(-1, self.x_f.shape[1], -1)
+        z_f.requires_grad = True
+        return z_f
+
+    @property
+    def z_u(self):
+        return self.z.unsqueeze(1).expand(-1, self.x_u.shape[1], -1)
+
+    @property
+    def z_bc_ub(self):
+        return self.z.unsqueeze(1).expand(-1, self.x_bc_ub.shape[1], -1)
+
+    @property
+    def z_bc_lb(self):
+        return self.z.unsqueeze(1).expand(-1, self.x_bc_lb.shape[1], -1)
+
     def net_u(self, x, t, z=None):
         """The standard DNN that takes (x,t) --> u."""
         input = torch.cat([x, t], dim=1)
         if z is not None:
-            input_broad = input.unsqueeze(0).expand(z.shape[0], -1, -1)
-            z_broad = z.unsqueeze(1).expand(-1, input.shape[0], -1)
-            input = torch.cat([input_broad, z_broad], dim=-1)
+            # x_broad = x.unsqueeze(0).expand(z.shape[0], -1, -1)
+            # t_broad = t.unsqueeze(0).expand(z.shape[0], -1, -1)
+            # input_broad = input.unsqueeze(0).expand(z.shape[0], -1, -1)
+            # z_broad = z.unsqueeze(1).expand(-1, input.shape[0], -1)
+            input = torch.cat([x, t, z], dim=-1)
         u = self.dnn(input)
         return u
 
     def net_f(self, x, t, z=None):
         """ Autograd for calculating the residual for different systems."""
         u = self.net_u(x, t, z)
-
         u_t = torch.autograd.grad(
             u, t,
             grad_outputs=torch.ones_like(u),
@@ -138,6 +182,8 @@ class PhysicsInformedNN_pbc():
             retain_graph=True,
             create_graph=True
         )[0]
+
+
 
         u_xx = torch.autograd.grad(
             u_x, x,
@@ -152,7 +198,18 @@ class PhysicsInformedNN_pbc():
             f = u_t - self.nu*u_xx - self.rho*u + self.rho*u**2
         elif 'reaction' in self.system:
             f = u_t - self.rho*u + self.rho*u**2
-        return f
+
+        if z is None:
+            return f
+        else:
+            u_z = torch.autograd.grad(
+                u, z,
+                grad_outputs=torch.ones_like(u),
+                retain_graph=True,
+                create_graph=True
+            )[0]
+            dz = torch.mean(((u_z ** 2).sum(-1) - 1) ** 2)
+            return f, dz
 
     def net_b_derivatives(self, u_lb, u_ub, x_bc_lb, x_bc_ub):
         """For taking BC derivatives."""
@@ -173,38 +230,65 @@ class PhysicsInformedNN_pbc():
 
         return u_lb_x, u_ub_x
 
+    def net_u_derivatives(self, u0, x_u):
+        """For taking initial condition derivatives."""
+
+        u_x = torch.autograd.grad(
+            u0, x_u,
+            grad_outputs=torch.ones_like(u0),
+            retain_graph=True,
+            create_graph=True
+            )[0]
+
+        return u_x
+
     def loss_pinn(self, verbose=True):
         """ Loss function. """
         if torch.is_grad_enabled():
             self.optimizer.zero_grad()
-        u_pred = self.net_u(self.x_u, self.t_u, self.z)
-        u_pred_lb = self.net_u(self.x_bc_lb, self.t_bc_lb, self.z)
-        u_pred_ub = self.net_u(self.x_bc_ub, self.t_bc_ub, self.z)
+        u_pred = self.net_u(self.x_u, self.t_u, self.z_u)
+
+        u_pred_lb = self.net_u(self.x_bc_lb, self.t_bc_lb, self.z_bc_lb)
+        u_pred_ub = self.net_u(self.x_bc_ub, self.t_bc_ub, self.z_bc_ub)
         if self.nu != 0:
             u_pred_lb_x, u_pred_ub_x = self.net_b_derivatives(u_pred_lb, u_pred_ub, self.x_bc_lb, self.x_bc_ub)
-        f_pred = self.net_f(self.x_f, self.t_f, self.z)
+        f_pred = self.net_f(self.x_f, self.t_f, self.z_f)
+        if self.z is not None:
+            f_pred, jac_z_penalty = f_pred
+        else:
+            jac_z_penalty = None
 
-        p = 0.5
+        uu_x = self.net_u_derivatives(u_pred, self.x_u)
+
+        # p = 0.3
         if self.loss_style == 'mean':
             loss_u = torch.mean((self.u - u_pred) ** 2)
             loss_b = torch.mean((u_pred_lb - u_pred_ub) ** 2)
             if self.nu != 0:
                 loss_b += torch.mean((u_pred_lb_x - u_pred_ub_x) ** 2)
-            # loss_f = torch.mean(f_pred ** 2)
-            loss_f = torch.mean(torch.log(torch.abs(f_pred)))
-            # loss_f = torch.exp(torch.sum(torch.log(f_pred ** 2) ** p) ) ** p / f_pred.numel()
+            loss_f = torch.mean(f_pred ** 2)
+            # loss_f = torch.mean(torch.log(torch.abs(f_pred)))
+            # loss_f = torch.mean(torch.log(f_pred**2))
+            # loss_f = torch.sum(torch.log(torch.abs(f_pred)))/ f_pred.numel()
         elif self.loss_style == 'sum':
             loss_u = torch.sum((self.u - u_pred) ** 2)
             loss_b = torch.sum((u_pred_lb - u_pred_ub) ** 2)
             if self.nu != 0:
                 loss_b += torch.sum((u_pred_lb_x - u_pred_ub_x) ** 2)
-            # loss_f = torch.sum(f_pred ** 2)
+            loss_f = torch.sum(f_pred ** 2)
             # loss_f = torch.sum(torch.log((f_pred + 1) ** 2))
             # loss_f = torch.sum(torch.log(f_pred ** 2))
-            loss_f = torch.exp(torch.sum(torch.log(f_pred ** 2) ** p)) ** p
+            # loss_f = torch.exp(torch.sum(torch.log(f_pred ** 2) ** p)) ** p
 
 
         loss = self.UB * (loss_u + loss_b) + self.L*loss_f
+        jac_z_penalty_coeff = 0.1
+        if jac_z_penalty is not None:
+            loss = loss + jac_z_penalty_coeff * jac_z_penalty
+
+        u0_x_penalty_coeff = 1.
+        u0_x_penalty = torch.pow(uu_x, 2).mean()
+        loss = loss + u0_x_penalty_coeff * u0_x_penalty
 
         if loss.requires_grad:
             loss.backward()
@@ -229,9 +313,15 @@ class PhysicsInformedNN_pbc():
         self.optimizer.step(self.loss_pinn)
 
     def predict(self, X, z=None):
-        z = z.to(device)
+
         x = torch.tensor(X[:, 0:1], requires_grad=True).float().to(device)
         t = torch.tensor(X[:, 1:2], requires_grad=True).float().to(device)
+
+        if z is not None:
+            z = z.to(device)
+            z = z.unsqueeze(1).expand(-1, X.shape[0], -1)
+            x = x.unsqueeze(0).expand(z.shape[0], -1, -1)
+            t = t.unsqueeze(0).expand(z.shape[0], -1, -1)
 
         self.dnn.eval()
         u = self.net_u(x, t, z)
