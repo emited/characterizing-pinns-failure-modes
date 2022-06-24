@@ -13,6 +13,14 @@ if torch.cuda.is_available():
 else:
     device = torch.device('cpu')
 
+
+class Swish(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.beta = nn.Parameter(torch.tensor([0.5]))
+    def forward(self, x):
+        return (x * torch.sigmoid_(x * F.softplus(self.beta))).div_(1.1)
+
 # the deep neural network
 class DNN(torch.nn.Module):
     def __init__(self, layers, activation, use_batch_norm=False, use_instance_norm=False):
@@ -31,6 +39,8 @@ class DNN(torch.nn.Module):
             self.activation = torch.nn.GELU
         elif activation == 'sin':
             self.activation = Sine
+        elif activation == 'swish':
+            self.activation = Swish
         self.use_batch_norm = use_batch_norm
         self.use_instance_norm = use_instance_norm
 
@@ -58,7 +68,7 @@ class DNN(torch.nn.Module):
         def init_weights(m):
             if isinstance(m, nn.Linear):
                 # torch.nn.init.orthogonal_(m.weight, gain=1.)
-                torch.nn.init.xavier_uniform_(m.weight, gain=3.)
+                torch.nn.init.xavier_uniform_(m.weight, gain=1.)
                 # m.bias.data.fill_(0.)
                 gain = 1
                 torch.nn.init.uniform_(m.bias.data, a=-gain, b=gain)
@@ -183,8 +193,6 @@ class PhysicsInformedNN_pbc():
             create_graph=True
         )[0]
 
-
-
         u_xx = torch.autograd.grad(
             u_x, x,
             grad_outputs=torch.ones_like(u_x),
@@ -208,8 +216,7 @@ class PhysicsInformedNN_pbc():
                 retain_graph=True,
                 create_graph=True
             )[0]
-            dz = torch.mean(((u_z ** 2).sum(-1) - 1) ** 2)
-            return f, dz
+            return f, u_z
 
     def net_b_derivatives(self, u_lb, u_ub, x_bc_lb, x_bc_ub):
         """For taking BC derivatives."""
@@ -230,17 +237,24 @@ class PhysicsInformedNN_pbc():
 
         return u_lb_x, u_ub_x
 
-    def net_u_derivatives(self, u0, x_u):
+    def net_u_derivatives(self, u0, x_u0):
         """For taking initial condition derivatives."""
 
-        u_x = torch.autograd.grad(
-            u0, x_u,
+        u0_x = torch.autograd.grad(
+            u0, x_u0,
             grad_outputs=torch.ones_like(u0),
             retain_graph=True,
             create_graph=True
             )[0]
 
-        return u_x
+        u0_xx = torch.autograd.grad(
+            u0_x, x_u0,
+            grad_outputs=torch.ones_like(u0),
+            retain_graph=True,
+            create_graph=True
+            )[0]
+
+        return u0_x, u0_xx
 
     def loss_pinn(self, verbose=True):
         """ Loss function. """
@@ -254,11 +268,10 @@ class PhysicsInformedNN_pbc():
             u_pred_lb_x, u_pred_ub_x = self.net_b_derivatives(u_pred_lb, u_pred_ub, self.x_bc_lb, self.x_bc_ub)
         f_pred = self.net_f(self.x_f, self.t_f, self.z_f)
         if self.z is not None:
-            f_pred, jac_z_penalty = f_pred
+            f_pred, u_z = f_pred
         else:
-            jac_z_penalty = None
+            u_z = None
 
-        uu_x = self.net_u_derivatives(u_pred, self.x_u)
 
         # p = 0.3
         if self.loss_style == 'mean':
@@ -280,15 +293,25 @@ class PhysicsInformedNN_pbc():
             # loss_f = torch.sum(torch.log(f_pred ** 2))
             # loss_f = torch.exp(torch.sum(torch.log(f_pred ** 2) ** p)) ** p
 
+        u0_penalty_coeff = 0
+        u0_x_penalty_coeff = 0
+        u0_xx_penalty_coeff = 0
+        jac_z_penalty_coeff = 10
 
         loss = self.UB * (loss_u + loss_b) + self.L*loss_f
-        jac_z_penalty_coeff = 0.1
-        if jac_z_penalty is not None:
+        if u_z is not None:
+            jac_z_penalty = torch.mean(((u_z ** 2).mean(-1) - 1) ** 2)
             loss = loss + jac_z_penalty_coeff * jac_z_penalty
 
-        u0_x_penalty_coeff = 1.
-        u0_x_penalty = torch.pow(uu_x, 2).mean()
-        loss = loss + u0_x_penalty_coeff * u0_x_penalty
+        # adding penalty on norm of gradients of u0 wrt x
+        u0_x, u0_xx = self.net_u_derivatives(u_pred, self.x_u)
+        u0_x_penalty = (torch.pow(u0_x, 2).sum(-1) - 1).pow(2).mean()
+        u0_penalty = (torch.pow(u_pred, 2).sum(-1) - 1).pow(2).mean()
+        u0_xx_penalty = (torch.pow(u0_xx, 2).sum(-1) - 1).pow(2).mean()
+        loss = loss\
+               + u0_x_penalty_coeff * u0_x_penalty \
+               + u0_xx_penalty_coeff * u0_xx_penalty \
+               + u0_penalty_coeff * u0_penalty
 
         if loss.requires_grad:
             loss.backward()

@@ -121,7 +121,7 @@ set_seed(args.seed) # for weight initialization
 
 # sample z
 nz = 64
-zdim = 4
+zdim = 16
 z = torch.randn(nz, zdim)
 # z = torch.clip(z, -3, 3)
 # z = None
