@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -72,7 +74,7 @@ class DNN(torch.nn.Module):
                 # m.bias.data.fill_(0.)
                 gain = 1
                 torch.nn.init.uniform_(m.bias.data, a=-gain, b=gain)
-        self.layers.apply(init_weights)
+        # self.layers.apply(init_weights)
 
     def forward(self, x):
         out = self.layers(x)
@@ -81,9 +83,10 @@ class DNN(torch.nn.Module):
 class PhysicsInformedNN_pbc():
     """PINNs (convection/diffusion/reaction) for periodic boundary conditions."""
     def __init__(self, system, X_u_train, u_train, X_f_train, bc_lb, bc_ub, layers, G, nu, beta, rho, optimizer_name, lr,
-        net, L=1, activation='tanh', loss_style='mean', UB=1, z=None):
+        net, L=1, activation='tanh', loss_style='mean', UB=1, z=None, nx=None, nt=None):
 
         self.z = z.to(device)
+        self.nx, self.nt = nx, nt
         self.system = system
         self.x_f = torch.tensor(X_f_train[:, 0:1]).float().to(device)
         self.t_f = torch.tensor(X_f_train[:, 1:2]).float().to(device)
@@ -153,6 +156,19 @@ class PhysicsInformedNN_pbc():
         z_f.requires_grad = True
         return z_f
 
+    def calc_pl_lengths(self, styles, images):
+        device = images.device
+        # num_pixels = self.nx * self.nt
+        num_pixels = images.shape[1]
+        pl_noise = torch.randn(images.shape, device=device) / math.sqrt(num_pixels)
+        outputs = (images * pl_noise).sum()
+
+        pl_grads = torch.autograd.grad(outputs=outputs, inputs=styles,
+                              grad_outputs=torch.ones(outputs.shape, device=device),
+                              create_graph=True, retain_graph=True, only_inputs=True)[0]
+
+        return (pl_grads ** 2).sum(dim=2).mean(dim=1).sqrt()
+
     @property
     def z_u(self):
         return self.z.unsqueeze(1).expand(-1, self.x_u.shape[1], -1)
@@ -210,12 +226,13 @@ class PhysicsInformedNN_pbc():
         if z is None:
             return f
         else:
-            u_z = torch.autograd.grad(
-                u, z,
-                grad_outputs=torch.ones_like(u),
-                retain_graph=True,
-                create_graph=True
-            )[0]
+            # u_z = torch.autograd.grad(
+            #     u, z,
+            #     grad_outputs=torch.ones_like(u),
+            #     retain_graph=True,
+            #     create_graph=True
+            # )[0]
+            u_z = None
             return f, u_z
 
     def net_b_derivatives(self, u_lb, u_ub, x_bc_lb, x_bc_ub):
@@ -247,14 +264,15 @@ class PhysicsInformedNN_pbc():
             create_graph=True
             )[0]
 
-        u0_xx = torch.autograd.grad(
-            u0_x, x_u0,
-            grad_outputs=torch.ones_like(u0),
-            retain_graph=True,
-            create_graph=True
-            )[0]
-
-        return u0_x, u0_xx
+        # u0_xx = torch.autograd.grad(
+        #     u0_x, x_u0,
+        #     grad_outputs=torch.ones_like(u0),
+        #     retain_graph=True,
+        #     create_graph=True
+        #     )[0]
+        #
+        # return u0_x, u0_xx
+        return u0_x, None
 
     def loss_pinn(self, verbose=True):
         """ Loss function. """
@@ -266,7 +284,8 @@ class PhysicsInformedNN_pbc():
         u_pred_ub = self.net_u(self.x_bc_ub, self.t_bc_ub, self.z_bc_ub)
         if self.nu != 0:
             u_pred_lb_x, u_pred_ub_x = self.net_b_derivatives(u_pred_lb, u_pred_ub, self.x_bc_lb, self.x_bc_ub)
-        f_pred = self.net_f(self.x_f, self.t_f, self.z_f)
+        z_f = self.z_f
+        f_pred = self.net_f(self.x_f, self.t_f, z_f)
         if self.z is not None:
             f_pred, u_z = f_pred
         else:
@@ -293,25 +312,30 @@ class PhysicsInformedNN_pbc():
             # loss_f = torch.sum(torch.log(f_pred ** 2))
             # loss_f = torch.exp(torch.sum(torch.log(f_pred ** 2) ** p)) ** p
 
-        u0_penalty_coeff = 0
-        u0_x_penalty_coeff = 0
-        u0_xx_penalty_coeff = 0
-        jac_z_penalty_coeff = 10
+        u0_penalty_coeff = 1
+        u0_x_penalty_coeff = 1
+        # u0_xx_penalty_coeff = 1
+        # jac_z_penalty_coeff = 1
 
         loss = self.UB * (loss_u + loss_b) + self.L*loss_f
-        if u_z is not None:
-            jac_z_penalty = torch.mean(((u_z ** 2).mean(-1) - 1) ** 2)
-            loss = loss + jac_z_penalty_coeff * jac_z_penalty
-
-        # adding penalty on norm of gradients of u0 wrt x
+        # if u_z is not None:
+        #     jac_z_penalty = torch.mean(((u_z ** 2).mean(-1) - 1) ** 2)
+        #     loss = loss + jac_z_penalty_coeff * jac_z_penalty
+        #
+        # # adding penalty on norm of gradients of u0 wrt x
         u0_x, u0_xx = self.net_u_derivatives(u_pred, self.x_u)
-        u0_x_penalty = (torch.pow(u0_x, 2).sum(-1) - 1).pow(2).mean()
-        u0_penalty = (torch.pow(u_pred, 2).sum(-1) - 1).pow(2).mean()
-        u0_xx_penalty = (torch.pow(u0_xx, 2).sum(-1) - 1).pow(2).mean()
+        u0_x_penalty = (torch.pow(u0_x, 2).mean(-2) - 1).pow(2).mean()
+        u0_penalty = (torch.pow(u_pred, 2).mean(-2) - 1).pow(2).mean()
+        # u0_xx_penalty = (torch.pow(u0_xx, 2).sum(-1) - 1).pow(2).mean()
         loss = loss\
                + u0_x_penalty_coeff * u0_x_penalty \
-               + u0_xx_penalty_coeff * u0_xx_penalty \
                + u0_penalty_coeff * u0_penalty
+               # + u0_xx_penalty_coeff * u0_xx_penalty \
+
+        pl_loss_coeff = 10
+        pl_lengths = self.calc_pl_lengths(z_f, f_pred)
+        pl_loss = ((pl_lengths - 1) ** 2).mean()
+        loss += pl_loss_coeff * pl_loss
 
         if loss.requires_grad:
             loss.backward()
