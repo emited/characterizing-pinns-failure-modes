@@ -123,14 +123,15 @@ X_u_train = xx1 # (x,t) for initial condition
 
 # sample z
 nz = 1
-zdim = 16
+zdim = 12
 # z = torch.randn(nz, zdim)
 # z0s = torch.zeros(nz, zdim).unsqueeze(0)
 z0s = torch.randn(nz, zdim).unsqueeze(0)
 
 # z = torch.clip(z, -3, 3)
 
-layers.insert(0, X_u_train.shape[-1] + zdim)
+# layers.insert(0, 2 * X_u_train.shape[-1] + 2 * zdim)
+layers.insert(0, 2 * 64)
 
 model = PhysicsInformedNN_pbc(args.system, X_u_train, u_train, X_f_train, bc_lb, bc_ub, layers, G, nu, beta, rho,
                             args.optimizer_name, args.lr, args.net, args.L, args.activation, args.loss_style, UB=0, z=z0s[0])
@@ -139,43 +140,43 @@ model = PhysicsInformedNN_pbc(args.system, X_u_train, u_train, X_f_train, bc_lb,
 #####################################################################
 ######################## latent component analysis ####################
 ###################################################################
-# eps = torch.linspace(-6, 6, 6).unsqueeze(1).unsqueeze(2)
-# zs = z0s + eps
-# i = 0
-# zs[..., :i] = z0s[..., :i]
-# zs[..., i+1:] = z0s[..., i+1:]
-#
-# for iz, z in enumerate(zs):
-#     u_pred = model.predict(X_star, z=z)
-#     if args.visualize:
-#         path = f"heatmap_results/{args.system}"
-#         u_pred = u_pred.reshape(-1, len(t), len(x))
-#         for i, u_pred_z in enumerate(u_pred):
-#             if i > 5:
-#                 break
-#             u_predict(u_vals, u_pred_z, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr, args.u0_str, args.system, path=path, prefix=f'u_pred_reloaded_{iz}')
-#             plt.show()
-#             plt.clf()
+eps = torch.linspace(-3, 3, 10).unsqueeze(1).unsqueeze(2)
+zs = z0s + eps
+i = 0
+zs[..., :i] = z0s[..., :i]
+zs[..., i+1:] = z0s[..., i+1:]
+
+for iz, z in enumerate(zs):
+    u_pred = model.predict(X_star, z=z)
+    if args.visualize:
+        path = f"heatmap_results/{args.system}"
+        u_pred = u_pred.reshape(-1, len(t), len(x))
+        for i, u_pred_z in enumerate(u_pred):
+            if i > 5:
+                break
+            u_predict(u_vals, u_pred_z, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr, args.u0_str, args.system, path=path, prefix=f'u_pred_reloaded_{iz}')
+            plt.show()
+            plt.clf()
 
 #####################################################################
 ######################## continuous interpoltion ####################
 #####################################################################
-# z0 = torch.randn(1, zdim)
-# z1 = torch.randn(1, zdim)
-# a = torch.linspace(0, 1, 6)
-# zs = torch.stack([z0 * (1- ai) + z1 * ai for ai in a], 0)
-#
-# for iz, z in enumerate(zs):
-#     u_pred = model.predict(X_star, z=z)
-#     if args.visualize:
-#         path = f"heatmap_results/{args.system}"
-#         u_pred = u_pred.reshape(-1, len(t), len(x))
-#         for i, u_pred_z in enumerate(u_pred):
-#             if i > 5:
-#                 break
-#             u_predict(u_vals, u_pred_z, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr, args.u0_str, args.system, path=path, prefix=f'u_pred_reloaded_{iz}')
-#             plt.show()
-#             plt.clf()
+z0 = torch.randn(1, zdim)
+z1 = torch.randn(1, zdim)
+a = torch.linspace(0, 1, 6)
+zs = torch.stack([z0 * (1- ai) + z1 * ai for ai in a], 0)
+
+for iz, z in enumerate(zs):
+    u_pred = model.predict(X_star, z=z)
+    if args.visualize:
+        path = f"heatmap_results/{args.system}"
+        u_pred = u_pred.reshape(-1, len(t), len(x))
+        for i, u_pred_z in enumerate(u_pred):
+            if i > 5:
+                break
+            u_predict(u_vals, u_pred_z, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr, args.u0_str, args.system, path=path, prefix=f'u_pred_reloaded_{iz}')
+            plt.show()
+            plt.clf()
 #####################################################################
 #####################################################################
 #####################################################################
@@ -184,40 +185,46 @@ model = PhysicsInformedNN_pbc(args.system, X_u_train, u_train, X_f_train, bc_lb,
 #####################################################################
 ######################## generator inversion ####################
 #####################################################################
+
+# with torch.no_grad():
+#     z0s = torch.randn(nz, zdim).unsqueeze(0)
+#     z = z0s[0].to(device)
+#     z.requires_grad = True
+#     x0 = model.x_u
+#     u0 = torch.sin(2*x0)
+#     # u0[x0 < math.pi] = 0
+#     optimizer = torch.optim.Adam([z], lr=0.08)
 #
-with torch.no_grad():
-    z0s = torch.randn(nz, zdim).unsqueeze(0)
-    z = z0s[0].to(device)
-    z.requires_grad = True
-    x0 = model.x_u
-    u0 = torch.sin(2*x0)
-    u0[x0 < math.pi] = 0
-    optimizer = torch.optim.Adam([z], lr=0.2)
-
-epochs = 600
-for e in range(1, epochs + 1):
-    optimizer.zero_grad()
-    z_u = z.unsqueeze(1).expand(-1, model.z_u.shape[1], -1)
-    u0_rec = model.net_u(model.x_u, model.t_u, z_u)
-    loss = torch.mean((u0 - u0_rec) ** 2)
-
-    z_bc_lb = z.unsqueeze(1).expand(-1, model.t_bc_lb.shape[1], -1)
-    z_bc_ub = z.unsqueeze(1).expand(-1, model.t_bc_ub.shape[1], -1)
-    u_pred_lb = model.net_u(model.x_bc_lb, model.t_bc_lb, z_bc_lb)
-    u_pred_ub = model.net_u(model.x_bc_ub, model.t_bc_ub, z_bc_ub)
-    loss += torch.mean((u_pred_lb - u_pred_ub) ** 2)
-    loss.backward()
-    optimizer.step()
-    if e % 100 == 0 or e == epochs:
-        path = f"heatmap_results/{args.system}"
-        u_pred = model.predict(X_star, z=z)
-        u_pred = u_pred.reshape(-1, len(t), len(x))
-        for i, u_pred_z in enumerate(u_pred):
-            if i > 5:
-                break
-            u_predict(u_vals, u_pred_z, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
-                      args.u0_str, args.system, path=path, prefix=f'u_pred_reloaded_{e}')
-            plt.show()
-            plt.clf()
-
 #
+# def renorm(x, old_min, old_max, new_min, new_max):
+#     return (new_max - new_min) * ((x - old_min) / (old_max - old_min)) + new_min
+#
+# epochs = 600
+# for e in range(1, epochs + 1):
+#     old_min, old_max = 0.0935, 0.0970
+#     new_min, new_max = 1, -1
+#     optimizer.zero_grad()
+#     z_u = z.unsqueeze(1).expand(-1, model.z_u.shape[1], -1)
+#     u0_rec = renorm(model.net_u(model.x_u, model.t_u, z_u), old_min, old_max, new_min, new_max)
+#     loss = torch.mean((u0 - u0_rec) ** 2)
+#
+#     z_bc_lb = z.unsqueeze(1).expand(-1, model.t_bc_lb.shape[1], -1)
+#     z_bc_ub = z.unsqueeze(1).expand(-1, model.t_bc_ub.shape[1], -1)
+#     u_pred_lb = renorm(model.net_u(model.x_bc_lb, model.t_bc_lb, z_bc_lb), old_min, old_max, new_min, new_max)
+#     u_pred_ub = renorm(model.net_u(model.x_bc_ub, model.t_bc_ub, z_bc_ub), old_min, old_max, new_min, new_max)
+#     loss += torch.mean((u_pred_lb - u_pred_ub) ** 2)
+#     loss.backward()
+#     optimizer.step()
+#     if e % 100 == 0 or e == epochs:
+#         path = f"heatmap_results/{args.system}"
+#         u_pred = renorm(model.predict(X_star, z=z), old_min, old_max, new_min, new_max)
+#         u_pred = u_pred.reshape(-1, len(t), len(x))
+#         for i, u_pred_z in enumerate(u_pred):
+#             if i > 5:
+#                 break
+#             u_predict(u_vals, u_pred_z, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
+#                       args.u0_str, args.system, path=path, prefix=f'u_pred_reloaded_{e}')
+#             plt.show()
+#             plt.clf()
+
+

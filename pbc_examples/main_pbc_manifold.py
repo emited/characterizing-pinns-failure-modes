@@ -1,7 +1,7 @@
 """Run PINNs for convection/reaction/reaction-diffusion with periodic boundary conditions."""
 
 import argparse
-from net_pbc_manifold import *
+from net_pbc_manifold_gan import *
 import os
 from pbc_examples.data.systems_pbc import *
 from utils import *
@@ -121,24 +121,24 @@ set_seed(args.seed) # for weight initialization
 
 # sample z
 nz = 64
-zdim = 16
-z = torch.randn(nz, zdim)
+zdim = 12
 # z = torch.clip(z, -3, 3)
 # z = None
 
-layers.insert(0, X_u_train.shape[-1] + zdim)
+layers.insert(0, 2 * 64)
+# layers.insert(0, X_u_train.shape[-1] * 2 + 2 * 64)
 
 model = PhysicsInformedNN_pbc(args.system, X_u_train, u_train, X_f_train, bc_lb, bc_ub, layers, G, nu, beta, rho,
-                            args.optimizer_name, args.lr, args.net, args.L, args.activation, args.loss_style, UB=0, z=z, nx=args.xgrid, nt=args.nt)
+                            args.optimizer_name, args.lr, args.net, args.L, args.activation, args.loss_style, UB=0, nx=args.xgrid, nt=args.nt, nz=nz, zdim=zdim, base_distr='normal')
 
 if args.optimizer_name != 'LBFGS':
     for e in range(5000):
         if e != 0:
-            model.z = torch.randn(nz, zdim, device=device)
             model.train()
 
-        if e % 500 == 0:
-            z = torch.randn(nz, zdim)
+        if e % 100 == 0:
+            z = model.sample_base_distr(nz, zdim)
+            # z = torch.randn(nz, zdim)
             u_pred = model.predict(X_star, z=z)
             if args.visualize:
                 path = f"heatmap_results/{args.system}"
