@@ -3,92 +3,101 @@ from torch import nn
 
 from pbc_examples.modules.separation_embedding import Block
 from pbc_examples.modules.separation_param import ParamModule
-from pbc_examples.net_pbc import SymmetricInitDNN
+from pbc_examples.modules.separation_param_simple_latents import FactorizedMultiplicativeModulation as FMM
+from pbc_examples.net_pbc import SymmetricInitDNN, DNN
 
 
-
-
-class SeparationParamM(torch.nn.Module, ParamModule):
+class SymmetryNet(torch.nn.Module, ParamModule):
     """Add central embedding to the main network"""
-    def __init__(self, param_dim):
-        super(SeparationParamM, self).__init__()
+    def __init__(self, coord_dim, param_dim):
+        super(SymmetryNet, self).__init__()
         self.latent_dim = 128
         num_blocks = 4
-        num_xt_blocks = 4
+        hidden_dim = 128
+        # is_first, emb_dim, hidden_dim, activation, num_args = 3, last_weight_is_zero_init = False, first_emb_dim = -1,):
+        self.blocks = nn.ModuleList(
+            [Block(i == 0, self.latent_dim, hidden_dim, 'sin', 1, first_emb_dim=coord_dim)
+             for i in range(num_blocks)])
+        # self.style_net = DNN([param_dim, hidden_dim, hidden_dim], 'sin')
+        self.style_net = DNN([param_dim, hidden_dim], 'relu')
+        self.affines = nn.ModuleList([nn.Linear(hidden_dim, hidden_dim, bias=True) for _ in range(num_blocks)])
+        self.d = DNN([hidden_dim, 1], "identity")
+
+    def forward(self, coords, param, ):
+        w = self.style_net(param)
+        h = coords
+        for i, b in enumerate(self.blocks):
+            s = self.affines[i](w)
+            h = b(h, s)
+        u_pred = 10 * self.d(h)
+
+        return u_pred
+
+class ModulatedSymmetryNet(torch.nn.Module, ParamModule):
+    """Add central embedding to the main network"""
+
+    def __init__(self, coord_dim, param_dim, out_dim=1, max_rank=10):
+        super(ModulatedSymmetryNet, self).__init__()
+        self.latent_dim = 128
+        self.max_rank = max_rank
+        num_blocks = 4
         hidden_dim = 128
 
-        self.d = SymmetricInitDNN([hidden_dim, 1], "identity")
-        self.h0 = torch.nn.Parameter(torch.zeros(1, hidden_dim))
-        self.hx0 = torch.nn.Parameter(torch.zeros(1, hidden_dim))
-        self.ht0 = torch.nn.Parameter(torch.zeros(1, hidden_dim))
-        self.blocks = nn.ModuleList(
-            [Block(i == 0, 2 * self.latent_dim, hidden_dim, 'sin', 1, first_emb_dim=hidden_dim)
-             for i in range(num_blocks)])
-        self.e2lsx = nn.ModuleList(
-            [Block(i == 0, param_dim + 1, hidden_dim, 'smallsin', 1, first_emb_dim=hidden_dim)
-             for i in range(num_xt_blocks)])
-        # self.llx = nn.Linear(hidden_dim, self.latent_dim)
-        self.llx = SymmetricInitDNN([hidden_dim, self.latent_dim], "identity")
-        # self.llx.weight.data.zero_()
-        # # self.llx.bias.data.zero_()
-        # with torch.no_grad():
-        #     xbound = 1 / self.latent_dim
-        #     xbound = xbound / math.sqrt(100)
-        #     xbias = torch.empty((self.latent_dim,))
-        #     init.uniform_(xbias, -xbound, xbound)
-        #     self.llx.bias.data = xbias
-        #     # self.llx.bias.data.zero_()
-        #     init.normal_(self.llx.weight, 0, xbound * 0.1)
-        #     # init.normal_(self.llx.weight, 0, xbound * 1)
+        mlins = []
+        for i in range(num_blocks):
+            if i == 0:
+                in_dim = coord_dim
+            else:
+                in_dim = hidden_dim
+            if i == num_blocks - 1:
+                out_dim = out_dim
+            else:
+                out_dim = hidden_dim
+            # in_features, out_features, in_mod_features, rank, bias = True
+            mlin = FMM(in_dim, out_dim, self.latent_dim,
+                                   rank=min(min(in_dim, out_dim), max_rank))
+            mlins.append(mlin)
+        self.mlins = nn.ModuleList(mlins)
+        self.style_net = DNN([param_dim, hidden_dim, hidden_dim, hidden_dim], 'relu')
 
-        self.e2lst = nn.ModuleList(
-            [Block(i == 0, param_dim + 1, hidden_dim, 'smallsin', 1,
-                   first_emb_dim=hidden_dim) for i in range(num_xt_blocks)])
-        # self.llt = nn.Linear(hidden_dim, self.latent_dim)
-        # self.llt.weight.data.zero_()
-        self.llt = SymmetricInitDNN([hidden_dim, self.latent_dim], "identity")
+    def forward(self, coords, param, ):
+        w = self.style_net(param)
+        h = coords
+        for i in range(len(self.mlins) - 1):
+            h = self.mlins[i](h, w)
+            h = torch.relu(h)
+        h = self.mlins[-1](h)
+        return h
 
-        # with torch.no_grad():
-        #     tbound = 1 / self.latent_dim
-        #     tbound = tbound / math.sqrt(100)
-        #     tbias = torch.empty((self.latent_dim,))
-        #     init.uniform_(tbias, -tbound, tbound)
-        #     self.llt.bias.data = tbias
-        #     # self.llt.bias.data.zero_()
-        #     init.normal_(self.llt.weight, 0, xbound * 0.1)
 
-        self.zt = None
+def param_linear(input, weight, bias=None):
+    '''
+    The difference with the other ParamLinear linear in the code is the fact that
+    there are no weights that are saved in memory that are not used anyway
+    '''
+    # bias = params.get('bias', None)
+    # weight = params['weight']
+    output = input.matmul(weight.permute(*[i for i in range(len(weight.shape) - 2)], -1, -2))
+    if bias is not None:
+        output += bias.unsqueeze(-2)
+    return output
 
-    def forward(self, x, t, param, ):
-        # ex : (B, emb_dim)
-        # x: (B, xgrid, 1)
 
-        # (B, emb_dim) -> (B, X, emb_dim)
-        ex_broadcasted = param.unsqueeze(1).expand(-1, x.shape[1], -1)
-        # (1, hidden_dim) -> (1, X, hidden_dim)
-        hhx = self.hx0.unsqueeze(1).expand(-1, x.shape[1], -1)
-        for b in self.e2lsx:
-            hhx = b(hhx, torch.cat([ex_broadcasted, x], -1))
-        px = self.llx(hhx)
+class ModulatedLinear(nn.Linear):
+    """Fully connected version of stylegan2's modulated conv"""
+    def __init__(self, in_features, out_features, bias=True):
+        super(ModulatedLinear, self).__init__(in_features, out_features, bias=bias)
+        self.eps = 1e-8
 
-        # (B, emb_dim) -> (B, T, emb_dim)
-        et_broadcasted = param.unsqueeze(1).expand(-1, t.shape[1], -1)
-        hht = self.ht0.unsqueeze(1).expand(-1, t.shape[1], -1)
-        for b in self.e2lst:
-            hht = b(hht, torch.cat([et_broadcasted, t], -1))
-        zt = self.llt(hht)
-
-        zt_broadcasted = zt.unsqueeze(2).expand(-1, -1, px.shape[1], -1)
-        px_broadcasted = px.unsqueeze(1).expand(-1, zt.shape[1], -1, -1)
-
-        h0_repeated = self.h0.unsqueeze(1).unsqueeze(2).expand(*zt_broadcasted.shape[:-1], self.h0.shape[1])
-        h = h0_repeated
-        for b in self.blocks:
-            ztpx = torch.cat([zt_broadcasted, px_broadcasted], -1)
-            h = b(h, ztpx)
-        u_pred = self.d(h)
-
-        return {'u_pred': u_pred,
-                'zt': zt, 'px': px,
-                # 'ex': ex, 'et': et,
-                }
+    def forward(self, input, style):
+        """
+        style: (B, I), weight: (O, I), input: (B, I), bias: (B, O)
+        output: (B, O)
+        """
+        assert self.weight.shape[1] == style.shape[1]
+        # mod_weight: (B, O, I)
+        mod_weight = self.weight.unsqueeze(0) * style.unsqueeze(1)
+        norm_weight = mod_weight.pow(2).sum(-1, keepdim=True)
+        demod_weight = mod_weight / torch.sqrt(norm_weight + self.eps)
+        output = param_linear(input, demod_weight, self.bias)
+        return output

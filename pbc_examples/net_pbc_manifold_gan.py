@@ -10,6 +10,7 @@ from choose_optimizer import *
 # CUDA support
 from pbc_examples.modules.discr import ToyDiscriminator, set_requires_grad, GANLoss
 from pbc_examples.modules.features import FourierFeatures
+from pbc_examples.modules.nn_symmetries import SymmetryNet
 from pbc_examples.modules.separation_param_simple_latents_un import SeparationParamSimpleLatentUn
 from pbc_examples.net_pbc import Sine, SymmetricInitDNN
 
@@ -94,14 +95,6 @@ class FFDNN(nn.Module):
         return self.dnn(ffs)
 
 
-class SepDNN(nn.Module):
-    def __init__(self,):
-        super().__init__()
-        self.dnn = SeparationParamSimpleLatentUn(param_dim=zdim, x_param_dim=1, t_param_dim=1, separate_params=True)
-
-    def forward(self, input):
-
-
 class PhysicsInformedNN_pbc():
     """PINNs (convection/diffusion/reaction) for periodic boundary conditions."""
     def __init__(self, system, X_u_train, u_train, X_f_train, bc_lb, bc_ub, layers, G, nu, beta, rho, optimizer_name, lr,
@@ -147,10 +140,11 @@ class PhysicsInformedNN_pbc():
         self.net = net
 
         if self.net == 'DNN':
+            # self.dnn = DNN(layers, activation).to(device)
             # dnn = DNN(layers, activation).to(device)
             # ffeat = FourierFeatures(self.zdim + 2, 64, mult=10).to(device)
             # self.dnn = FFDNN(dnn, ffeat)
-            self.dnn = SepDNN()
+            self.dnn = SymmetryNet(2, self.zdim).to(device)
             # self.dnn = DNN(layers, activation).to(device)
             # self.dnn = SymmetricInitDNN(layers, activation).to(device)
         else: # "pretrained" can be included in model path
@@ -212,10 +206,14 @@ class PhysicsInformedNN_pbc():
 
     def net_u(self, x, t, z=None):
         """The standard DNN that takes (x,t) --> u."""
-        input = torch.cat([x, t], dim=1)
-        if z is not None:
-            input = torch.cat([x, t, z], dim=-1)
-        u = self.dnn(input)
+        if isinstance(self.dnn, SymmetryNet):
+            coords = torch.cat([x, t], dim=-1)
+            u = self.dnn(coords, z)
+        else:
+            input = torch.cat([x, t], dim=1)
+            if z is not None:
+                input = torch.cat([x, t, z], dim=-1)
+            u = self.dnn(input)
         return u
 
     def net_f(self, x, t, z=None):
@@ -351,7 +349,7 @@ class PhysicsInformedNN_pbc():
             # loss_f = torch.exp(torch.sum(torch.log(f_pred ** 2) ** p)) ** p
         loss = self.UB * (loss_u + loss_b) + self.L*loss_f
         # loss = 0
-        gan_coeff = 1
+        gan_coeff = 10
         loss += gan_coeff * self.criterion_gan(self.discr(u_pred.squeeze(-1)), True)
         # u0_penalty_coeff = 1
         # u0_x_penalty_coeff = 1
@@ -380,7 +378,7 @@ class PhysicsInformedNN_pbc():
             loss.backward()
 
         set_requires_grad([self.discr], True)
-        for dstep in range(3):
+        for dstep in range(1):
             self.optim_dis.zero_grad()
 
             with torch.no_grad():

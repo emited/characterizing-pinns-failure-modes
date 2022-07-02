@@ -23,17 +23,20 @@ class ParamLinear(nn.Linear):
         bias = params.get('bias', None)
         weight = params['weight']
         output = input.matmul(weight.permute(*[i for i in range(len(weight.shape) - 2)], -1, -2))
-        output += bias.unsqueeze(-2)
+        if bias is not None:
+            output += bias.unsqueeze(-2)
         return output
 
 
-class ModulatedLinear(nn.Module):
+class FactorizedMultiplicativeModulation(nn.Module):
     def __init__(self, in_features, out_features, in_mod_features, rank, bias=True,):
-        super(ModulatedLinear, self).__init__()
+        super(FactorizedMultiplicativeModulation, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
         self.lin = ParamLinear(in_features, out_features)
         # self.A = nn.Linear(in_mod_features, out_features * rank)
 
-        self.mod_params = nn.Linear(in_mod_features, in_features * (rank + bias) + out_features * rank)
+        self.mod_params = nn.Linear(in_mod_features, in_features * rank + out_features * (rank + bias))
         self.base_weight = nn.Parameter(torch.empty((out_features, in_features),))
         if bias:
             self.base_bias = nn.Parameter(torch.empty(out_features,))
@@ -47,21 +50,23 @@ class ModulatedLinear(nn.Module):
 
         mparam_cursor = 0
         if self.is_bias:
-            bias_mod = torch.sigmoid(mparams[..., [0]])
-            mparam_cursor += 1
+            # bias_mod = torch.sigmoid(mparams[..., [0]])
+            bias_mod = mparams[..., :self.out_features]
+            mparam_cursor += self.out_features
         else:
-            bias_mod = 1
+            bias_mod = None
         A_size = self.out_features * self.rank
         A = mparams[..., mparam_cursor: mparam_cursor + A_size]\
             .reshape((-1, self.out_features, self.rank))
         mparam_cursor += A_size
-        Bt = mparams[..., mparam_cursor: -1]\
-            .reshape((-1, self.in_features, self.rank))
+        Bt = mparams[..., mparam_cursor:]\
+            .reshape((-1, self.rank, self.in_features))
         weight_mod = torch.sigmoid(torch.bmm(A, Bt))
 
         params = {}
-        params['weight'] = weight_mod * self.base_weight
-        params['bias'] = bias_mod  * self.base_bias
+        params['weight'] = weight_mod * self.base_weight.unsqueeze(0)
+        # params['bias'] = bias_mod  * self.base_bias
+        params['bias'] = bias_mod # as in FFMs, no base bias
         output = self.lin(input, params)
         return output
 
@@ -151,3 +156,4 @@ class SeparationParamSimpleLatent(torch.nn.Module, ParamModule):
         return {'u_pred': u_pred,
                 'zt': zt.squeeze(2), 'px': px.squeeze(2),
                 }
+

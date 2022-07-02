@@ -120,8 +120,8 @@ X_u_train = xx1 # (x,t) for initial condition
 set_seed(args.seed) # for weight initialization
 
 # sample z
-nz = 64
-zdim = 12
+nz = 16
+zdim = 1
 # z = torch.clip(z, -3, 3)
 # z = None
 
@@ -136,7 +136,7 @@ if args.optimizer_name != 'LBFGS':
         if e != 0:
             model.train()
 
-        if e % 100 == 0:
+        if e % 500 == 0:
             z = model.sample_base_distr(nz, zdim)
             # z = torch.randn(nz, zdim)
             u_pred = model.predict(X_star, z=z)
