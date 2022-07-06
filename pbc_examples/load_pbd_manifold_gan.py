@@ -1,6 +1,10 @@
 """Run PINNs for convection/reaction/reaction-diffusion with periodic boundary conditions."""
 
 import argparse
+import math
+
+import torch
+
 from net_pbc_manifold_gan import *
 import os
 from pbc_examples.data.systems_pbc import *
@@ -113,94 +117,115 @@ u_train = uu1 # just the initial condition
 X_u_train = xx1 # (x,t) for initial condition
 
 
-############################
-# Train the model
-############################
 
-set_seed(args.seed) # for weight initialization
+
+# set_seed(args.seed) # for weight initialization
 
 # sample z
-nz = 64
-zdim = 4
+nz = 1
+zdim = 32
+# z = torch.randn(nz, zdim)
+# z0s = torch.zeros(nz, zdim).unsqueeze(0)
+# z0s = torch.randn(nz, zdim).unsqueeze(0)
+
 # z = torch.clip(z, -3, 3)
-# z = None
 
+# layers.insert(0, 2 * X_u_train.shape[-1] + 2 * zdim)
 layers.insert(0, 2 * 64)
-# layers.insert(0, X_u_train.shape[-1] * 2 + 2 * 64)
 
-model = PhysicsInformedNN_pbc(args.system, X_u_train, u_train, X_star_noinitial_noboundary, bc_lb, bc_ub, layers, G, nu, beta, rho,
-                            args.optimizer_name, args.lr, args.net, args.N_f, args.L, args.activation, args.loss_style, UB=0, nx=args.xgrid, nt=args.nt, nz=nz, zdim=zdim, base_distr='normal')
+model = PhysicsInformedNN_pbc(args.system, X_u_train, u_train, X_f_train, bc_lb, bc_ub, layers, G, nu, beta, rho,
+                            args.optimizer_name, args.lr, args.net, args.L, args.activation, args.loss_style, UB=0,
+                              base_distr='uniform')
 
-if args.optimizer_name != 'LBFGS':
-    for e in range(5000):
-        if e != 0:
-            model.train()
+z0s = model.sample_base_distr(nz, zdim, device=device)
+#####################################################################
+######################## latent component analysis ####################
+###################################################################
+eps = torch.linspace(-6, 6, 5).unsqueeze(1).unsqueeze(2).to(device)
+zs = z0s + eps
+i = 4
+zs[..., :i] = z0s[..., :i]
+zs[..., i+1:] = z0s[..., i+1:]
 
-        if e % 100 == 0:
-            with torch.no_grad():
-                nz = 5
-                z = model.sample_base_distr(nz, zdim)
-                # z = torch.randn(nz, zdim)
-                u_pred = model.predict(X_star, z=z)
-                if args.visualize:
-                    path = f"heatmap_results/{args.system}"
-                    u_pred = u_pred.reshape(-1, len(t), len(x))
-                    for i, u_pred_z in enumerate(u_pred):
-                        if i > 5:
-                            break
-                        u_predict(u_vals, u_pred_z, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr, args.u0_str, args.system, path=path, prefix=f'u_pred_{e}')
-                        plt.show()
-                        plt.clf()
-
-else:
-    model.train()
-
-with torch.no_grad():
-    z = model.sample_base_distr(nz, zdim)
+for iz, z in enumerate(zs):
     u_pred = model.predict(X_star, z=z)
+    if args.visualize:
+        path = f"heatmap_results/{args.system}"
+        u_pred = u_pred.reshape(-1, len(t), len(x))
+        for i, u_pred_z in enumerate(u_pred):
+            if i > 5:
+                break
+            u_predict(u_vals, u_pred_z, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr, args.u0_str, args.system, path=path, prefix=f'u_pred_reloaded_{iz}')
+            plt.show()
+            plt.clf()
 
-import matplotlib.pyplot as plt
-# zt = model.dnn.zt.detach().cpu().numpy()
-# plt.scatter(zt[:, 0], zt[:, 1], c=np.linspace(0, 1, len(zt))) # yellow: 1, blue:  0
-# plt.show()
-
-# error_u_relative = np.linalg.norm(u_star-u_pred, 2)/np.linalg.norm(u_star, 2)
-# error_u_abs = np.mean(np.abs(u_star - u_pred))
-# error_u_linf = np.linalg.norm(u_star - u_pred, np.inf)/np.linalg.norm(u_star, np.inf)
+#####################################################################
+######################## continuous interpoltion ####################
+#####################################################################
+# z0 = torch.randn(1, zdim)
+# z1 = torch.randn(1, zdim)
+# a = torch.linspace(0, 1, 6)
+# zs = torch.stack([z0 * (1- ai) + z1 * ai for ai in a], 0)
 #
-# print('Error u rel: %e' % (error_u_relative))
-# print('Error u abs: %e' % (error_u_abs))
-# print('Error u linf: %e' % (error_u_linf))
-
-if args.visualize:
-    path = f"heatmap_results/{args.system}"
-    if not os.path.exists(path):
-        os.makedirs(path)
-    u_pred = u_pred.reshape(-1, len(t), len(x))
-    # exact_u(Exact, x, t, nu, beta, rho, orig_layers, args.N_f, args.L, args.source, args.u0_str, args.system, path=path)
-    # plt.show()
-    # plt.clf()
-
-    # u_diff(Exact, u_pred, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr, args.u0_str, args.system, path=path)
-    # plt.show()
-    # plt.clf()
-    for i, u_pred_z in enumerate(u_pred):
-        if i > 5:
-            break
-        u_predict(u_vals, u_pred_z, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
-                  args.u0_str, args.system, path=path, prefix=f'u_pred_final')
-        plt.show()
-        plt.clf()
+# for iz, z in enumerate(zs):
+#     u_pred = model.predict(X_star, z=z)
+#     if args.visualize:
+#         path = f"heatmap_results/{args.system}"
+#         u_pred = u_pred.reshape(-1, len(t), len(x))
+#         for i, u_pred_z in enumerate(u_pred):
+#             if i > 5:
+#                 break
+#             u_predict(u_vals, u_pred_z, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr, args.u0_str, args.system, path=path, prefix=f'u_pred_reloaded_{iz}')
+#             plt.show()
+#             plt.clf()
+#####################################################################
+#####################################################################
+#####################################################################
 
 
-if args.save_model: # whether or not to save the model
-    path = "saved_models"
-    path = os.path.join(os.getcwd(), path)
-    if not os.path.exists(path):
-        os.makedirs(path)
+#####################################################################
+######################## generator inversion ####################
+#####################################################################
 
-    if 'pretrained' not in args.net: # only save new models
-        fn = f"pretrained_{args.system}_u0{args.u0_str}_nu{nu}_beta{beta}_rho{rho}_Nf{args.N_f}_{args.layers}_L{args.L}_source{args.source}_seed{args.seed}.pt"
-        fn = os.path.join(path, fn)
-        print('saving to', fn)
-        torch.save(model, fn)
+# with torch.no_grad():
+#     z0s = torch.randn(nz, zdim).unsqueeze(0)
+#     z = z0s[0].to(device)
+#     z.requires_grad = True
+#     x0 = model.x_u
+#     u0 = torch.sin(2*x0)
+#     # u0[x0 < math.pi] = 0
+#     optimizer = torch.optim.Adam([z], lr=0.08)
+#
+#
+# def renorm(x, old_min, old_max, new_min, new_max):
+#     return (new_max - new_min) * ((x - old_min) / (old_max - old_min)) + new_min
+#
+# epochs = 600
+# for e in range(1, epochs + 1):
+#     old_min, old_max = 0.0935, 0.0970
+#     new_min, new_max = 1, -1
+#     optimizer.zero_grad()
+#     z_u = z.unsqueeze(1).expand(-1, model.z_u.shape[1], -1)
+#     u0_rec = renorm(model.net_u(model.x_u, model.t_u, z_u), old_min, old_max, new_min, new_max)
+#     loss = torch.mean((u0 - u0_rec) ** 2)
+#
+#     z_bc_lb = z.unsqueeze(1).expand(-1, model.t_bc_lb.shape[1], -1)
+#     z_bc_ub = z.unsqueeze(1).expand(-1, model.t_bc_ub.shape[1], -1)
+#     u_pred_lb = renorm(model.net_u(model.x_bc_lb, model.t_bc_lb, z_bc_lb), old_min, old_max, new_min, new_max)
+#     u_pred_ub = renorm(model.net_u(model.x_bc_ub, model.t_bc_ub, z_bc_ub), old_min, old_max, new_min, new_max)
+#     loss += torch.mean((u_pred_lb - u_pred_ub) ** 2)
+#     loss.backward()
+#     optimizer.step()
+#     if e % 100 == 0 or e == epochs:
+#         path = f"heatmap_results/{args.system}"
+#         u_pred = renorm(model.predict(X_star, z=z), old_min, old_max, new_min, new_max)
+#         u_pred = u_pred.reshape(-1, len(t), len(x))
+#         for i, u_pred_z in enumerate(u_pred):
+#             if i > 5:
+#                 break
+#             u_predict(u_vals, u_pred_z, x, t, nu, beta, rho, args.seed, orig_layers, args.N_f, args.L, args.source, args.lr,
+#                       args.u0_str, args.system, path=path, prefix=f'u_pred_reloaded_{e}')
+#             plt.show()
+#             plt.clf()
+
+

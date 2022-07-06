@@ -10,9 +10,10 @@ from choose_optimizer import *
 # CUDA support
 from pbc_examples.modules.discr import ToyDiscriminator, set_requires_grad, GANLoss
 from pbc_examples.modules.features import FourierFeatures
-from pbc_examples.modules.nn_symmetries import SymmetryNet
+from pbc_examples.modules.nn_symmetries import SymmetryNet, ModulatedSymmetryNet
 from pbc_examples.modules.separation_param_simple_latents_un import SeparationParamSimpleLatentUn
 from pbc_examples.net_pbc import Sine, SymmetricInitDNN
+from pbc_examples.utils import sample_random
 
 if torch.cuda.is_available():
     device = torch.device('cuda')
@@ -97,16 +98,18 @@ class FFDNN(nn.Module):
 
 class PhysicsInformedNN_pbc():
     """PINNs (convection/diffusion/reaction) for periodic boundary conditions."""
-    def __init__(self, system, X_u_train, u_train, X_f_train, bc_lb, bc_ub, layers, G, nu, beta, rho, optimizer_name, lr,
-        net, L=1, activation='tanh', loss_style='mean', UB=1, nx=None, nt=None, nz=None, zdim=None, base_distr='normal'):
+    def __init__(self, system, X_u_train, u_train, X_star_noinitial_noboundary, bc_lb, bc_ub, layers, G, nu, beta, rho, optimizer_name, lr,
+        net, N_f, L=1, activation='tanh', loss_style='mean', UB=1, nx=None, nt=None, nz=None, zdim=None, base_distr='normal',):
 
         self.nz = nz
+        self.N_f = N_f
         self.base_distr = base_distr
         self.zdim = zdim
         self.nx, self.nt = nx, nt
         self.system = system
-        self.x_f = torch.tensor(X_f_train[:, 0:1]).float().to(device)
-        self.t_f = torch.tensor(X_f_train[:, 1:2]).float().to(device)
+        self.X_star_noinitial_noboundary = X_star_noinitial_noboundary
+        # self.x_f = torch.tensor(X_f_train[:, 0:1]).float().to(device)
+        # self.t_f = torch.tensor(X_f_train[:, 1:2]).float().to(device)
         self.x_u = torch.tensor(X_u_train[:, 0:1]).float().to(device)
         self.t_u = torch.tensor(X_u_train[:, 1:2]).float().to(device)
         self.x_bc_lb = torch.tensor(bc_lb[:, 0:1]).float().to(device)
@@ -118,8 +121,8 @@ class PhysicsInformedNN_pbc():
             # self.z_u = self.z.unsqueeze(1).expand(-1, X_u_train.shape[0], -1)
             # self.z_bc_ub = z.unsqueeze(1).expand(-1, self.x_bc_ub.shape[0], -1)
             # self.z_bc_lb = z.unsqueeze(1).expand(-1, self.t_bc_ub.shape[0], -1)
-            self.x_f = self.x_f.unsqueeze(0).expand(nz, -1, -1)
-            self.t_f = self.t_f.unsqueeze(0).expand(nz, -1, -1)
+            # self.x_f = self.x_f.unsqueeze(0).expand(nz, -1, -1)
+            # self.t_f = self.t_f.unsqueeze(0).expand(nz, -1, -1)
             self.x_u = self.x_u.unsqueeze(0).expand(nz, -1, -1)
             self.t_u = self.t_u.unsqueeze(0).expand(nz, -1, -1)
             self.x_bc_lb = self.x_bc_lb.unsqueeze(0).expand(nz, -1, 1)
@@ -127,8 +130,8 @@ class PhysicsInformedNN_pbc():
             self.x_bc_ub = self.x_bc_ub.unsqueeze(0).expand(nz, -1, 1)
             self.t_bc_ub = self.t_bc_ub.unsqueeze(0).expand(nz, -1, 1)
 
-        self.x_f.requires_grad = True
-        self.t_f.requires_grad = True
+        # self.x_f.requires_grad = True
+        # self.t_f.requires_grad = True
         self.x_u.requires_grad = True
         self.t_u.requires_grad = True
         self.x_bc_lb.requires_grad = True
@@ -144,7 +147,8 @@ class PhysicsInformedNN_pbc():
             # dnn = DNN(layers, activation).to(device)
             # ffeat = FourierFeatures(self.zdim + 2, 64, mult=10).to(device)
             # self.dnn = FFDNN(dnn, ffeat)
-            self.dnn = SymmetryNet(2, self.zdim).to(device)
+            # self.dnn = SymmetryNet(2, self.zdim).to(device)
+            self.dnn = ModulatedSymmetryNet(2, self.zdim, 64).to(device)
             # self.dnn = DNN(layers, activation).to(device)
             # self.dnn = SymmetricInitDNN(layers, activation).to(device)
         else: # "pretrained" can be included in model path
@@ -174,10 +178,21 @@ class PhysicsInformedNN_pbc():
 
         self.discr = ToyDiscriminator(1, 128).to(device)
         self.optim_dis = choose_optimizer(self.optimizer_name, self.discr.parameters(), self.lr)
-        self.criterion_gan = GANLoss("vanilla").to(device)
+        self.criterion_gan = GANLoss("hinge").to(device)
 
-    def z_f(self, z):
-        z_f = z.unsqueeze(1).expand(-1, self.x_f.shape[1], -1)
+    def sample_collocation_points(self):
+        X_all = self.X_star_noinitial_noboundary
+        idx = np.random.choice(X_all.shape[0], self.N_f, replace=False)
+        X_f_train = X_all[idx, :]
+        x_f = torch.tensor(X_f_train[:, 0:1]).float().to(device)
+        t_f = torch.tensor(X_f_train[:, 1:2]).float().to(device)
+        if self.nz is not None:
+            x_f = x_f.unsqueeze(0).expand(self.nz, -1, -1)
+            t_f = t_f.unsqueeze(0).expand(self.nz, -1, -1)
+        return x_f, t_f
+
+    def z_f(self, z, N_f):
+        z_f = z.unsqueeze(1).expand(-1, N_f, -1)
         z_f.requires_grad = True
         return z_f
 
@@ -206,7 +221,8 @@ class PhysicsInformedNN_pbc():
 
     def net_u(self, x, t, z=None):
         """The standard DNN that takes (x,t) --> u."""
-        if isinstance(self.dnn, SymmetryNet):
+        if isinstance(self.dnn, SymmetryNet)\
+                or isinstance(self.dnn, ModulatedSymmetryNet):
             coords = torch.cat([x, t], dim=-1)
             u = self.dnn(coords, z)
         else:
@@ -214,11 +230,14 @@ class PhysicsInformedNN_pbc():
             if z is not None:
                 input = torch.cat([x, t, z], dim=-1)
             u = self.dnn(input)
-        return u
+        if isinstance(u, list) or isinstance(u, tuple):
+            u, aux_outputs = u[0], u[1:]
+            return u, aux_outputs
+        return u, None
 
     def net_f(self, x, t, z=None):
         """ Autograd for calculating the residual for different systems."""
-        u = self.net_u(x, t, z)
+        u, w = self.net_u(x, t, z)
         u_t = torch.autograd.grad(
             u, t,
             grad_outputs=torch.ones_like(u),
@@ -231,13 +250,15 @@ class PhysicsInformedNN_pbc():
             retain_graph=True,
             create_graph=True
         )[0]
-
-        u_xx = torch.autograd.grad(
-            u_x, x,
-            grad_outputs=torch.ones_like(u_x),
-            retain_graph=True,
-            create_graph=True
-            )[0]
+        if self.nu != 0:
+            u_xx = torch.autograd.grad(
+                u_x, x,
+                grad_outputs=torch.ones_like(u_x),
+                retain_graph=True,
+                create_graph=True
+                )[0]
+        else:
+            u_xx = 0
 
         if 'convection' in self.system or 'diffusion' in self.system:
             f = u_t - self.nu*u_xx + self.beta*u_x - self.G
@@ -256,7 +277,7 @@ class PhysicsInformedNN_pbc():
             #     create_graph=True
             # )[0]
             u_z = None
-            return f, u_z
+            return f, u_z, w
 
     def net_b_derivatives(self, u_lb, u_ub, x_bc_lb, x_bc_ub):
         """For taking BC derivatives."""
@@ -287,19 +308,22 @@ class PhysicsInformedNN_pbc():
             create_graph=True
             )[0]
 
-        u0_xx = torch.autograd.grad(
-            u0_x, x_u0,
-            grad_outputs=torch.ones_like(u0),
-            retain_graph=True,
-            create_graph=True
-            )[0]
+        if self.nu != 0:
+            u0_xx = torch.autograd.grad(
+                u0_x, x_u0,
+                grad_outputs=torch.ones_like(u0),
+                retain_graph=True,
+                create_graph=True
+                )[0]
+        else:
+            u0_xx = None
 
         return u0_x, u0_xx
         # return u0_x, None
 
     def sample_base_distr(self, nz, zdim, device=None):
         if device is None:
-            device = self.x_f.device
+            device = self.x_u.device
         if self.base_distr == 'normal':
             return torch.randn(nz, zdim, device=device)
         elif self.base_distr == 'uniform':
@@ -317,15 +341,20 @@ class PhysicsInformedNN_pbc():
 
         z = self.sample_base_distr(self.nz, self.zdim)
         z_u = self.z_u(z)
-        u_pred = self.net_u(self.x_u, self.t_u, z_u)
+        u_pred, _ = self.net_u(self.x_u, self.t_u, z_u)
 
-        u_pred_lb = self.net_u(self.x_bc_lb, self.t_bc_lb, self.z_bc_lb(z))
-        u_pred_ub = self.net_u(self.x_bc_ub, self.t_bc_ub, self.z_bc_ub(z))
+        u_pred_lb, _ = self.net_u(self.x_bc_lb, self.t_bc_lb, self.z_bc_lb(z))
+        u_pred_ub, _ = self.net_u(self.x_bc_ub, self.t_bc_ub, self.z_bc_ub(z))
         if self.nu != 0:
             u_pred_lb_x, u_pred_ub_x = self.net_b_derivatives(u_pred_lb, u_pred_ub, self.x_bc_lb, self.x_bc_ub)
-        z_f = self.z_f(z)
-        f_pred = self.net_f(self.x_f, self.t_f, z_f)
-        f_pred, u_z = f_pred
+        z_f = self.z_f(z, self.N_f)
+        with torch.no_grad():
+            x_f, t_f = self.sample_collocation_points()
+        x_f.requires_grad = True
+        t_f.requires_grad = True
+
+        f_pred = self.net_f(x_f, t_f, z_f)
+        f_pred, u_z, w_f = f_pred
 
         # p = 0.3
         if self.loss_style == 'mean':
@@ -334,23 +363,15 @@ class PhysicsInformedNN_pbc():
             if self.nu != 0:
                 loss_b += torch.mean((u_pred_lb_x - u_pred_ub_x) ** 2)
             # loss_f = torch.mean(torch.log(f_pred ** 2))
-            loss_f = torch.mean(f_pred ** 2)
+            # loss_f = torch.mean(torch.max(f_pred ** 2))
+            # loss_f = torch.mean(torch.softmax(f_pred ** 2, dim=-1))
+            # loss_f = torch.mean(torch.max(f_pred ** 2, dim=-2)[0])
             # loss_f = torch.mean(torch.log(torch.abs(f_pred)))
-            # loss_f = torch.mean(torch.log(f_pred**2))
+            loss_f = torch.mean(f_pred ** 2)
             # loss_f = torch.sum(torch.log(torch.abs(f_pred)))/ f_pred.numel()
-        elif self.loss_style == 'sum':
-            loss_u = torch.sum((self.u - u_pred) ** 2)
-            loss_b = torch.sum((u_pred_lb - u_pred_ub) ** 2)
-            if self.nu != 0:
-                loss_b += torch.sum((u_pred_lb_x - u_pred_ub_x) ** 2)
-            loss_f = torch.sum(f_pred ** 2)
-            # loss_f = torch.sum(torch.log((f_pred + 1) ** 2))
-            # loss_f = torch.sum(torch.log(f_pred ** 2))
-            # loss_f = torch.exp(torch.sum(torch.log(f_pred ** 2) ** p)) ** p
-        loss = self.UB * (loss_u + loss_b) + self.L*loss_f
-        # loss = 0
-        gan_coeff = 10
-        loss += gan_coeff * self.criterion_gan(self.discr(u_pred.squeeze(-1)), True)
+        loss = 0
+        # loss = self.UB * (loss_u + loss_b) + self.L*loss_f
+
         # u0_penalty_coeff = 1
         # u0_x_penalty_coeff = 1
         # u0_xx_penalty_coeff = 1
@@ -370,9 +391,13 @@ class PhysicsInformedNN_pbc():
         #        + u0_xx_penalty_coeff * u0_xx_penalty
         #
         # pl_loss_coeff = 1
-        # pl_lengths = self.calc_pl_lengths(z_f, f_pred)
-        # pl_loss = ((pl_lengths - 1) ** 2).mean()
-        # loss += pl_loss_coeff * pl_loss
+        # if pl_loss_coeff > 0:
+        #     pl_lengths = self.calc_pl_lengths(w_f, f_pred)
+        #     pl_loss = ((pl_lengths - 1) ** 2).mean()
+        #     loss += pl_loss_coeff * pl_loss
+
+        gan_coeff = 1
+        loss += gan_coeff * self.criterion_gan(self.discr(u_pred.squeeze(-1)), True)
 
         if loss.requires_grad:
             loss.backward()
@@ -382,7 +407,7 @@ class PhysicsInformedNN_pbc():
             self.optim_dis.zero_grad()
 
             with torch.no_grad():
-                decay_speed = 32
+                decay_speed = 16
                 gauss = torch.randn(u_pred.shape).to(u_pred.device)
                 filter = torch.linspace(0, 1, gauss.shape[1]).to(u_pred.device)
                 filter = torch.maximum(- decay_speed * filter + 1, torch.zeros_like(filter, device=u_pred.device))
@@ -390,11 +415,11 @@ class PhysicsInformedNN_pbc():
                 ifu = torch.fft.ifft(fu).real
                 real = 2 * ifu.unsqueeze(-1).to(u_pred.device)
             # import matplotlib.pyplot as plt
-            # plt.plot(filter.cpu().numpy())
-            # # plt.plot(gauss.squeeze(-1)[0].cpu().numpy())
-            # plt.plot(real.squeeze(-1)[0].cpu().numpy())
-            # plt.show()
-
+        #     # plt.plot(filter.cpu().numpy())
+        #     # # plt.plot(gauss.squeeze(-1)[0].cpu().numpy())
+        #     # plt.plot(real.squeeze(-1)[0].cpu().numpy())
+        #     # plt.show()
+        #
             fake = u_pred
             loss_real = self.criterion_gan(self.discr(real.squeeze(-1)), True)
             loss_fake = self.criterion_gan(self.discr(fake.squeeze(-1).detach()), False)
@@ -434,7 +459,7 @@ class PhysicsInformedNN_pbc():
             t = t.unsqueeze(0).expand(z.shape[0], -1, -1)
 
         self.dnn.eval()
-        u = self.net_u(x, t, z)
+        u, _ = self.net_u(x, t, z)
         u = u.detach().cpu().numpy()
 
         return u

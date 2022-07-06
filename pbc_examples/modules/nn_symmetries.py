@@ -1,3 +1,5 @@
+import math
+
 import torch
 from torch import nn
 
@@ -80,23 +82,28 @@ class ModulatedSymmetryNet(nn.Module):
 
         mlins = []
         affines = []
+        affines_bias = []
         for i in range(num_blocks):
             if i == 0:
                 in_dim = coord_dim
             else:
                 in_dim = hidden_dim
             if i == num_blocks - 1:
-                out_dim = out_dim
+                outt_dim = out_dim
             else:
-                out_dim = hidden_dim
+                outt_dim = hidden_dim
             # in_features, out_features, in_mod_features, rank, bias = True
-            mlin = ModulatedLinear(in_dim, out_dim, bias=True)
-            affine = nn.Linear(in_dim, hidden_dim, bias=True)
+            mlin = ModulatedLinear(in_dim, outt_dim, bias=True)
+            affine = nn.Linear(hidden_dim, in_dim, bias=True)
+            affine_bias = nn.Linear(hidden_dim, outt_dim, bias=True)
             mlins.append(mlin)
             affines.append(affine)
+            affines_bias.append(affine_bias)
         self.mlins = nn.ModuleList(mlins)
         self.affines = nn.ModuleList(affines)
-        self.style_net = DNN([z_dim, hidden_dim, hidden_dim, hidden_dim], 'relu')
+        self.affines_bias = nn.ModuleList(affines_bias)
+        self.style_net = DNN([z_dim, hidden_dim, hidden_dim, hidden_dim], 'sin')
+        # self.style_net = DNN([z_dim, hidden_dim], 'sin')
 
     def forward(self, coords, z, ):
         """
@@ -107,10 +114,12 @@ class ModulatedSymmetryNet(nn.Module):
         h = coords
         for i in range(len(self.mlins) - 1):
             a = self.affines[i](w)
-            h = self.mlins[i](h, a)
-            h = torch.relu(h)
+            a_bias = self.affines_bias[i](w)
+            h = self.mlins[i](h, a, a_bias)
+            h = torch.sin(h)
         a = self.affines[-1](w)
-        h = self.mlins[-1](h, a)
-        return h
+        a_bias = self.affines_bias[-1](w)
+        h = self.mlins[-1](h, a, a_bias)
+        return h, w
 
 
