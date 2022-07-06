@@ -47,6 +47,23 @@ class ExpSineAndLinearFeatures(nn.Module):
         return self.lin(torch.stack([exp, sin, cos], -1)).squeeze(-1)
 
 
+class FourierFeatures(nn.Module):
+    def __init__(self, in_features, out_features, mult):
+        super().__init__()
+        self.lin = nn.Linear(in_features, out_features, bias=False)
+        self.mult = mult
+        self.sin = get_activation('sin')()
+        self.cos = get_activation('cos')()
+
+    def forward(self, x_feat):
+        # x_feat: (B, X, out_features)
+        presine = self.mult * self.lin(x_feat)
+        sin = self.sin(presine)
+        cos = self.cos(presine)
+        return torch.cat([sin, cos], -1)
+
+
+
 class ExpSineAndLinear(nn.Module):
     def __init__(self, in_features, out_features, mults=None):
         super().__init__()

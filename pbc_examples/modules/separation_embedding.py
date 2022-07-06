@@ -31,7 +31,7 @@ class Block(torch.nn.Module):
         params = self.lin_emb(x)
         scale, shift = params[..., :self.hidden_dim], params[..., self.hidden_dim:]
         # self.lin.weight = self.lin.weight / self.lin.weight.sum(1, keepdim=True)
-        preact = self.lin(h * scale + shift)
+        preact = self.lin(h * (1 + scale) + shift)
         # preact = h * scale + shift
         act = self.activation(preact)
         return act
