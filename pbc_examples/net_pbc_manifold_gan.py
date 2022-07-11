@@ -369,8 +369,8 @@ class PhysicsInformedNN_pbc():
             # loss_f = torch.mean(torch.log(torch.abs(f_pred)))
             loss_f = torch.mean(f_pred ** 2)
             # loss_f = torch.sum(torch.log(torch.abs(f_pred)))/ f_pred.numel()
-        loss = 0
-        # loss = self.UB * (loss_u + loss_b) + self.L*loss_f
+        # loss = 0
+        loss = self.UB * (loss_u + loss_b) + self.L*loss_f
 
         # u0_penalty_coeff = 1
         # u0_x_penalty_coeff = 1
