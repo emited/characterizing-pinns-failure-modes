@@ -2,6 +2,30 @@ from torch.utils.data import Dataset
 import deepxde as dde
 import numpy as np
 
+from pbc_examples.pinns import pde_fns
+from pbc_examples.pinns.utils import DummyBC
+
+
+def create_pde_data(pde_name):
+    pde_fn = getattr(pde_fns, pde_name)
+    if pde_name in pde_fns.time_pdes:
+        num_domain = 100
+        num_boundary = 100
+        num_initial = 100
+        geom = dde.geometry.Interval(-1, 1)
+        timedomain = dde.geometry.TimeDomain(0, 1)
+        geomtime = dde.geometry.GeometryXTime(geom, timedomain)
+        bc = DummyBC(geomtime, lambda _, on_boundary: on_boundary, None)
+        ic = dde.icbc.IC(geomtime, lambda x: x, lambda _, on_initial: on_initial)
+        data = dde.data.TimePDE(geomtime, pde_fn, [ic, bc],
+                                num_domain=num_domain,
+                                num_boundary=num_boundary,
+                                num_initial=num_initial)
+        return data
+    else:
+        raise NotImplementedError(pde_name)
+
+
 class SimpleDataset(Dataset):
     """Dataset that uses pde, a DeepXDE:PDE object
         Same underlying pde for samples across the batch
