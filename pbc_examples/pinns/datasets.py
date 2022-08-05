@@ -33,13 +33,13 @@ class SimpleDataset(Dataset):
     def __init__(self, data: dde.data.PDE, batch_size: int):
         self.data = data
         self.batch_size = batch_size
-        from deepxde import losses as losses_module
+        # from deepxde import losses as losses_module
 
-        self.loss_fn = losses_module.get("MSE")
-
-        def losses_train(inputs, outputs):
-            return self.data.losses_train(None, outputs, self.loss_fn, inputs, None)
-        self.losses_fn = losses_train
+        # self.loss_fn = losses_module.get("MSE")
+        #
+        # def losses_train(inputs, outputs):
+        #     return self.data.losses_train(None, outputs, self.loss_fn, inputs, None)
+        # self.losses_fn = losses_train
 
     def __getitem__(self, item):
         x_all, y_all, aux = self.data.train_next_batch()

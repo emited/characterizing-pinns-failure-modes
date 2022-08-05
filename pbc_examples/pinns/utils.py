@@ -18,7 +18,6 @@ def generate_uniform_grid(gxt: dde.geometry.GeometryXTime, nt: int):
     x = gxt.geometry.uniform_points(nx, boundary=True)
     return X, x, t
 
-
 class DummyBC(dde.icbc.BC):
     def error(self, X, inputs, outputs, beg, end, aux_var=None):
         return None

@@ -79,8 +79,11 @@ class ModulatedSymmetryNet(nn.Module):
 
     def __init__(self, coord_dim, z_dim, hidden_dim=128, out_dim=1, num_blocks=4, ):
         super(ModulatedSymmetryNet, self).__init__()
+        self.z_dim = z_dim
+        self.coord_dim = coord_dim
 
         mlins = []
+        lins = []
         affines = []
         affines_bias = []
         for i in range(num_blocks):
@@ -94,11 +97,14 @@ class ModulatedSymmetryNet(nn.Module):
                 outt_dim = hidden_dim
             # in_features, out_features, in_mod_features, rank, bias = True
             mlin = ModulatedLinear(in_dim, outt_dim, bias=True)
+            # lin = nn.Linear(in_dim, outt_dim, bias=True)
             affine = nn.Linear(hidden_dim, in_dim, bias=True)
             affine_bias = nn.Linear(hidden_dim, outt_dim, bias=True)
             mlins.append(mlin)
             affines.append(affine)
             affines_bias.append(affine_bias)
+            # lins.append(lin)
+        # self.lins = nn.ModuleList(lins)
         self.mlins = nn.ModuleList(mlins)
         self.affines = nn.ModuleList(affines)
         self.affines_bias = nn.ModuleList(affines_bias)
@@ -113,6 +119,9 @@ class ModulatedSymmetryNet(nn.Module):
         w = self.style_net(z)
         h = coords
         for i in range(len(self.mlins) - 1):
+            # if i > 0:
+            #     h = self.lins[i](h)
+            # else:
             a = self.affines[i](w)
             a_bias = self.affines_bias[i](w)
             h = self.mlins[i](h, a, a_bias)

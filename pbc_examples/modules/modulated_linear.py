@@ -26,8 +26,8 @@ class ModulatedLinear(nn.Linear):
         """
         assert self.weight.shape[-1] == style.shape[-1]
         # mod_weight: (B, O, I)
-        mod_weight = self.weight.unsqueeze(0) * (1 + style.unsqueeze(-2))
-        # mod_weight = self.weight.unsqueeze(0) * style.unsqueeze(-2)
+        # mod_weight = self.weight.unsqueeze(0) * (1 + style.unsqueeze(-2))
+        mod_weight = self.weight.unsqueeze(0) * style.unsqueeze(-2)
         norm_weight = mod_weight.pow(2).sum(-1, keepdim=True)
         demod_weight = mod_weight * torch.rsqrt(norm_weight + self.eps)
         output = torch.einsum('...i, ...ji->...j', input, demod_weight)
