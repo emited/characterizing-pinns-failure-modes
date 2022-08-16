@@ -30,9 +30,11 @@ def v_translation(x):
 
 
 def v_rotation(x):
-    print('ok')
-    assert False
-    return torch.ones_like(x)
+    assert x.shape[-1] == 2
+    v = torch.ones_like(x)
+    v[..., 0] = x[..., 1]
+    v[..., 1] = -x[..., 0]
+    return v
 
 
 def change_along_flow(Fx, vx, x):
@@ -53,26 +55,29 @@ def equiv_cont(cont_layer, u, v, x):
     ux = u(x)
     vux = change_along_flow(ux, vx, x)
 
-    # x = x.detach()
-    # x.requires_grad_(True)
-    # ux = u(x)
     Qux = cont_layer(ux)
-    # dQux = grad(
-    #     Qux * vux.detach(), ux,
-    #     grad_outputs=torch.ones_like(Qux),
-    #     retain_graph=True,
-    #     create_graph=True,
-    # )[0]
 
-
-    dQux = grad(
-        Qux * vux.detach(), ux,
+    # this
+    dudx = grad(
+        ux, x,
         grad_outputs=torch.ones_like(Qux),
         retain_graph=True,
         create_graph=True,
     )[0]
+    dQux = []
+    for i in range(dudx.shape[-1]):
+        dQuxi = grad(
+            Qux * dudx[..., [i]].detach(), ux,
+            grad_outputs=torch.ones_like(Qux),
+            retain_graph=True,
+            create_graph=True,
+        )[0]
+        dQux.append(dQuxi)
+    dQux = torch.cat(dQux, -1)
+    vQu = torch.einsum('...i,...i->...', dQux, vx).unsqueeze(-1)
 
-    vQu = change_along_flow(Qux, vx.detach(), x)
+    # instead of this
+    # vQu = change_along_flow(Qux, vx.detach(), x)
 
     dQvu = grad(
         Qux * vux.detach(), ux,
@@ -118,10 +123,19 @@ def run_2d_test():
     x_grid, y_grid = torch.meshgrid(x_, y_)
     x = torch.stack([y_grid, x_grid], -1)
 
-    def u0(x):
-        r = x[..., 0] ** 2 + x[..., 1] ** 2
+    def ring(x):
+        center = [0, 1]
+        r = (x[..., 0] - center[0]) ** 2 + (x[..., 1] - center[1]) ** 2
         scale = .6
-        return torch.exp(-(r - 1) ** 2 / scale).unsqueeze(-1) + 1
+        return torch.exp(-(r - 3) ** 2 / scale).unsqueeze(-1)
+
+    def line(x):
+        r = x[..., 1] ** 2
+        scale = .6
+        return torch.exp(-(r - 3) ** 2 / scale).unsqueeze(-1)
+
+
+    u0 = ring
 
     center = [0, 0]
     r = (x[..., 0] - center[0]) ** 2 + (x[..., 1] - center[1]) ** 2
@@ -130,8 +144,10 @@ def run_2d_test():
     gauss_filter = partial(conv_2d, filter=gauss)
     y = gauss_filter(u0(x))
 
-    e, dQvu, mvQu = equiv_cont(gauss_filter, u0, v_translation, x)
-    eps = .3
+    # e, dQvu, mvQu = equiv_cont(gauss_filter, u0, v_translation, x)
+    e, dQvu, mvQu = equiv_cont(gauss_filter, u0, v_rotation, x)
+
+    eps = .1
     gQu = y - eps * mvQu
     # gQu = mvQu
     Qgu = y + eps * dQvu
@@ -165,15 +181,6 @@ def run_2d_test():
     plt.title('e')
     plt.imshow(e.squeeze(-1).detach().numpy(), origin='lower')
     plt.colorbar()
-    plt.show()
-    exit()
-
-    plt.subplot(1, 2, 2)
-    plt.plot(x.detach().numpy(), mvQu.detach().numpy(), label='mvQu')
-    plt.plot(x.detach().numpy(), dQvu.detach().numpy(), label='dQvu')
-    plt.plot(x.detach().numpy(), e.detach().numpy(), label='dQvu - vQu')
-
-    plt.legend()
     plt.show()
 
 if __name__ == '__main__':
