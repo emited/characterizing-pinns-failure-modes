@@ -3,8 +3,9 @@ from torch.fft import rfft, irfft, rfft2, irfft2, irfftn, rfftn
 import math
 import matplotlib.pyplot as plt
 from torch.autograd import grad
-from torch.autograd.functional import jacobian
+# from torch.autograd.functional import jacobian
 from functools import partial
+
 
 def low_pass_filter_1d(ux):
     uhat = rfft(ux.squeeze(-1))
@@ -22,11 +23,11 @@ def conv_2d_fft(ux, filter):
     return out.unsqueeze(-1) * 8
 
 
-def gauss_conv_2d(ux):
+def gauss_conv_2d(ux, batch_dim=True):
     import torch.nn as nn
     channels = ux.shape[-1]
     # Set these to whatever you want for your gaussian filter
-    kernel_size = 17
+    kernel_size = 31
     sigma = 5
 
     # Create a x, y coordinate grid of shape (kernel_size, kernel_size, 2)
@@ -61,9 +62,16 @@ def gauss_conv_2d(ux):
     # gaussian_filter.weight.requires_grad = False
 
     # (N, C_{in}, H_{in}, W_{in})
-    ux_reshaped = ux.permute(2, 0, 1).unsqueeze(0)
+    if batch_dim:
+        ux_reshaped = ux.permute(0, 3, 1, 2)
+    else:
+        ux_reshaped = ux.permute(2, 0, 1).unsqueeze(0)
     out = gaussian_filter(ux_reshaped)
-    out_reshaped = out.squeeze(0).permute(1, 2, 0)
+
+    if batch_dim:
+        out_reshaped = out.permute(0, 2, 3, 1)
+    else:
+        out_reshaped = out.squeeze(0).permute(1, 2, 0)
     return out_reshaped
 
 
@@ -76,8 +84,9 @@ def v_translation(x, u=None):
 
 def v_scale(x, ux):
     v_x = torch.zeros_like(x)
-    # v_u = u(x)
-    return torch.cat([v_x, ux], -1)
+    # v_u = torch.ones_like(ux)
+    v_u = ux
+    return torch.cat([v_x, v_u], -1)
 
 
 def v_rotation(x, u=None):
@@ -98,7 +107,6 @@ def change_along_flow(Fx, vx, x):
         create_graph=True,
     )[0]
     return torch.einsum('...i,...i->...', dFdx, vx).unsqueeze(-1)
-
 
 
 def equiv_cont(cont_layer, u, v, x):
@@ -146,9 +154,7 @@ def equiv_cont(cont_layer, u, v, x):
     return dQvu - vQu, dQvu, -vQu
 
 
-
 def equiv_cont_with_u(cont_layer, u, v, x):
-
     x.requires_grad_(True)
     ux = u(x)
     vx = v(x, ux).detach()
@@ -171,6 +177,8 @@ def equiv_cont_with_u(cont_layer, u, v, x):
         retain_graph=True,
         create_graph=True,
     )[0]
+
+    # computing derivative wrt coordinates
     dQudx = []
     for i in range(dudx.shape[-1]):
         dQudxi = grad(
@@ -182,25 +190,29 @@ def equiv_cont_with_u(cont_layer, u, v, x):
         dQudx.append(dQudxi)
     dQudx = torch.cat(dQudx, -1)
 
-    jacQ = jacobian(
-        cont_layer, ux,
-        create_graph=True,
-    )
-    # here there is a bug
-    j = jacQ.squeeze(5).squeeze(2).reshape((jacQ.shape[0] * jacQ.shape[1], jacQ.shape[2]* jacQ.shape[3]))
-    j = torch.diagonal(j, dim1=2, dim2=3)
-    J = j.reshape((jacQ.shape[0], jacQ.shape[1]))
+    # computing derivative wrt output ux
+    # # here there is a bug
+    # jacQ = jacobian(
+    #     cont_layer, ux,
+    #     create_graph=True,
+    # )
+    # j = jacQ.squeeze(5).squeeze(2).reshape((jacQ.shape[0] * jacQ.shape[1], jacQ.shape[2]* jacQ.shape[3]))
+    # j = torch.diagonal(j, dim1=2, dim2=3)
+    # J = j.reshape((jacQ.shape[0], jacQ.shape[1]))
+    # dQdu = grad(
+    #         Qux, ux,
+    #         grad_outputs=torch.ones_like(Qux),
+    #         retain_graph=True,
+    #         create_graph=True,
+    #     )[0]
 
-    dQdu = grad(
-            Qux, ux,
-            grad_outputs=torch.ones_like(Qux),
-            retain_graph=True,
-            create_graph=True,
-        )[0]
-
+    # approximation with finite difference
+    eps = 1e-3
+    dQdu = (cont_layer(ux + eps) - Qux) / eps
+    # dQdu = (cont_layer(ux - eps) - 2 * Qux + cont_layer(ux + eps)) / eps
     dQudx = torch.cat([dQudx, dQdu], -1)
-
-    vQu = torch.einsum('...i,...i->...', dQudx, vx).unsqueeze(-1)
+    vQ = v(x, Qux).detach()
+    vQu = torch.einsum('...i,...i->...', dQudx, vQ).unsqueeze(-1)
 
     # instead of this, which does not work
     # because implicitly we are taking the derivative of
@@ -247,6 +259,8 @@ def equiv_cont_with_u(cont_layer, u, v, x):
 
 def run_2d_test():
     n = 100
+    batch_dim = True
+
     x_ = torch.linspace(-math.pi, math.pi, n)
     y_ = torch.linspace(-math.pi, math.pi, n)
     x_grid, y_grid = torch.meshgrid(x_, y_)
@@ -277,6 +291,9 @@ def run_2d_test():
     # scale = .06
     # gauss = torch.exp(-r  ** 2 / scale).unsqueeze(-1)
     # gauss_filter = partial(conv_2d_fft, filter=gauss)
+    if batch_dim:
+        x = x.unsqueeze(0)
+
     gauss_filter = partial(gauss_conv_2d)
     y = gauss_filter(u0(x))
 
@@ -287,11 +304,21 @@ def run_2d_test():
     eps = .2
     gQu = y - eps * mvQu
     Qgu = y + eps * dQvu
+    u0x = u0(x)
+
+    if batch_dim:
+        u0x = u0x.squeeze(0)
+        y = y.squeeze(0)
+        gQu = gQu.squeeze(0)
+        Qgu = Qgu.squeeze(0)
+        mvQu = mvQu.squeeze(0)
+        dQvu = dQvu.squeeze(0)
+        e = e.squeeze(0)
 
     plt.figure(figsize=(6, 12))
     plt.subplot(4, 2, 1)
     plt.title('u0')
-    plt.imshow(u0(x).squeeze(-1).detach().numpy(), origin='lower')
+    plt.imshow(u0x.squeeze(-1).detach().numpy(), origin='lower')
     plt.colorbar()
     plt.subplot(4, 2, 2)
     plt.title('ut')
@@ -306,8 +333,8 @@ def run_2d_test():
     plt.imshow(Qgu.squeeze(-1).detach().numpy(),  origin='lower')
     plt.colorbar()
     plt.subplot(4, 2, 5)
-    plt.title('mvQu')
-    plt.imshow(mvQu.squeeze(-1).detach().numpy(),  origin='lower')
+    plt.title('vQu')
+    plt.imshow(-mvQu.squeeze(-1).detach().numpy(),  origin='lower')
     plt.colorbar()
     plt.subplot(4, 2, 6)
     plt.title('dQvu')
