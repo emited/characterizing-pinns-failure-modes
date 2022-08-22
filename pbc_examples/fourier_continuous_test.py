@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from torch.autograd import grad
 # from torch.autograd.functional import jacobian
 from functools import partial
-
+import numpy
 
 def low_pass_filter_1d(ux):
     uhat = rfft(ux.squeeze(-1))
@@ -89,15 +89,28 @@ def v_scale(x, ux):
     return torch.cat([v_x, v_u], -1)
 
 
-def v_rotation(x, u=None):
+def v_rotation(x, ux=None):
     assert x.shape[-1] == 2
     v = torch.ones_like(x)
     v[..., 0] = x[..., 1]
     v[..., 1] = -x[..., 0]
-    if u is not None:
-        v = torch.cat([v, torch.ones_like(u(x))], -1)
+    if ux is not None:
+        v = torch.cat([v, torch.ones_like(ux)], -1)
     return v
 
+
+def v_galilean_boost(x, ux):
+    """Galilean boost of the heat equation"""
+    x, t = x[..., [0]], x[..., [1]]
+    vks = [
+        2 * t * torch.ones_like(x),
+        torch.zeros_like(t),
+        - x * torch.ones_like(ux)
+    ]
+    return torch.cat(vks, -1)
+
+
+# TODO: implement infinite dimensional subalgebras
 
 def change_along_flow(Fx, vx, x):
     dFdx = grad(
@@ -190,7 +203,7 @@ def equiv_cont_with_u(cont_layer, u, v, x):
         dQudx.append(dQudxi)
     dQudx = torch.cat(dQudx, -1)
 
-    # computing derivative wrt output ux
+    # computing jacobian of Q wrt output ux
     # # here there is a bug
     # jacQ = jacobian(
     #     cont_layer, ux,
@@ -299,7 +312,8 @@ def run_2d_test():
 
     # e, dQvu, mvQu = equiv_cont(gauss_filter, u0, v_translation, x)
     # e, dQvu, mvQu = equiv_cont(gauss_filter, u0, v_rotation, x)
-    e, dQvu, mvQu = equiv_cont_with_u(gauss_filter, u0, v_scale, x)
+    # e, dQvu, mvQu = equiv_cont_with_u(gauss_filter, u0, v_scale, x)
+    e, dQvu, mvQu = equiv_cont_with_u(gauss_filter, u0, v_galilean_boost, x)
 
     eps = .2
     gQu = y - eps * mvQu
