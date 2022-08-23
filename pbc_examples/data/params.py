@@ -47,7 +47,27 @@ def create_params(name, separate_params=False):
         if separate_params:
             x_params, t_params = params[..., [0]], params[..., 1:]
             params = {'x_params': x_params, 't_params': t_params}
-
+    elif name == 'diffusion':
+        assert separate_params
+        xgrid, nt = 30, 30
+        nu = 1
+        print('params have no meaning, be careful')
+        # x_params = [np.sin(k * np.linspace(0, 2 * np.pi, xgrid, endpoint=False))
+        #             for k in range(1, 4)]
+        # x_params = np.stack(x_params)
+        # x_params = x_params.astype(np.float32)
+        x_params = np.array([[1], [2], [3],], dtype=np.float32)
+        t_params = np.array([[1], [1], [1],], dtype=np.float32)
+        params = {'x_params': x_params, 't_params': t_params}
+        data_args_list = [('diffusion', nu, 0, 0, f'np.sin({k}*x)', xgrid, nt, 0)
+                          for k in range(1, 4)]
+        x_valid_params = np.array([[4],], dtype=np.float32)
+        # x_valid_params = np.array([np.sin(4 * np.linspace(0, 2 * np.pi, xgrid, endpoint=False))], dtype=np.float32)
+        t_valid_params = np.array([[1],], dtype=np.float32)
+        valid_params = {'x_params': x_valid_params, 't_params': t_valid_params}
+        valid_args_list = [
+            ('diffusion', nu, 0, 0, 'np.sin(4*x)', xgrid, nt, 0),
+        ]
     elif name == 'simple_swap':
         assert separate_params
         x_params = np.array([[1], [-1]], dtype=np.float32)

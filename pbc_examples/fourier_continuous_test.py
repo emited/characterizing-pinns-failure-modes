@@ -167,7 +167,19 @@ def equiv_cont(cont_layer, u, v, x):
     return dQvu - vQu, dQvu, -vQu
 
 
-def equiv_cont_with_u(cont_layer, u, v, x):
+def equiv_cont_with_u(Q, u, v, x):
+    '''
+    TODO: make v a basis of the Lie Algebra and not just a
+    single vector field.
+    :param Q: continuous operator taking as input u(x)s
+    :param u: input function defined on x, should be differentiable
+    :param v: vector field function, defined on (x, u(x)),
+        associated to the group action
+    :param x: coordinates
+    deals with arbitrary batch dimensions
+    :return: dQvu - vQu, a (signed) infinitesimal measure of
+     equivariance of Q wrt to vector field v
+    '''
     x.requires_grad_(True)
     ux = u(x)
     vx = v(x, ux).detach()
@@ -180,7 +192,7 @@ def equiv_cont_with_u(cont_layer, u, v, x):
     dudx = torch.cat([dudx, torch.ones_like(dudx[..., [0]])], -1)
     vux = torch.einsum('...i,...i->...', dudx, vx).unsqueeze(-1)
 
-    Qux = cont_layer(ux)
+    Qux = Q(ux)
 
     # this: vQu = <dQudx, vx> where
     # dQudx = Jac_u(Q).T . dudx = grad_x( Qux * dudx)
@@ -221,7 +233,7 @@ def equiv_cont_with_u(cont_layer, u, v, x):
 
     # approximation with finite difference
     eps = 1e-3
-    dQdu = (cont_layer(ux + eps) - Qux) / eps
+    dQdu = (Q(ux + eps) - Qux) / eps
     # dQdu = (cont_layer(ux - eps) - 2 * Qux + cont_layer(ux + eps)) / eps
     dQudx = torch.cat([dQudx, dQdu], -1)
     vQ = v(x, Qux).detach()

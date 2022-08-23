@@ -161,45 +161,6 @@ if __name__ == '__main__':
     prefix = sys.argv[1]
     separate_params = True
 
-    # data_args_list = [
-    #     # ('convection-diffusion', 1, 1, 0, 'sin(2x)', 100, 100, 0),
-    #     # ('convection-diffusion', 1, 1, 0, 'sin(x)', 100, 100, 0),
-    #     # ('convection', 0, 1, 0, 'np.sin(3*x)', 100, 100, 0),
-    #     # ('convection', 0, 4, 0, 'np.sin(3*x)', 100, 100, 0),
-    #     ('convection', 0, 1, 0, 'sin(x)', 100, 100, 0),
-    #     ('convection', 0, 2, 0, 'sin(x)', 100, 100, 0),
-    #     ('convection', 0, 2, 0, 'gauss', 100, 100, 0),
-    #     ('convection', 0, 3, 0, 'gauss', 100, 100, 0),
-    #     ('convection', 0, 3, 0, 'sin(x)', 100, 100, 0),
-    #     ('convection', 0, 4, 0, 'gauss', 100, 100, 0),
-    #     ('convection', 0, 4, 0, 'sin(x)', 100, 100, 0),
-    # ]
-    # p = np.linspace(-1, 1, len(data_args_list))
-    # params = np.expand_dims(p, -1).astype(np.float32)
-
-
-    # params = np.array([[-1, -1], [1, -1], [-1, 1], [1, 1]]).astype(np.float32)
-    # data_args_list = [('convection', 0, 1, 0, f'np.sin({1}*x)', 100, 100, 0),
-    #                   ('convection', 0, 4, 0, f'np.sin({1}*x)', 100, 100, 0),
-    #                   ('convection', 0, 1, 0, f'np.sin({2}*x)', 100, 100, 0),
-    #                   ('convection', 0, 4, 0, f'np.sin({2}*x)', 100, 100, 0),
-    #                   ]
-
-    # params = np.array([[0], [1]])
-    # # data_args_list = [('convection', 0, 1, 0, 'np.exp(-np.power((x - 0.5*np.pi)/(np.pi/64), 2.)/2.)', 100, 100, 0),]
-    # data_args_list = [
-    #     ('convection', 0, 1, 0, 'np.sin(2*x)', 100, 100, 0),
-    #     ('convection', 0, 1, 0, 'np.sin(1*x)', 100, 100, 0),
-    # ]
-
-
-
-    # params = np.array([[[.1], [.1]], [[-.1], [-.1]]], dtype=np.float32)
-    # data_args_list = [
-    #     ('convection', 0, 1, 0, 'np.sin(2*x)', 100, 100, 0),
-    #     ('convection', 0, 4, 0, 'np.sin(1*x)', 100, 100, 0),
-    # ]
-    # data_args_list, params, valid_args_list, valid_params = create_params('big', separate_params=separate_params)
     data_args_list, params, valid_args_list, valid_params = create_params('diffusion', separate_params=separate_params)
     # data_args_list, params, valid_args_list, valid_params = create_params('simple_swap_x2', separate_params=separate_params)
     # data_args_list, params, valid_args_list, valid_params = create_params('big', separate_params=True)
