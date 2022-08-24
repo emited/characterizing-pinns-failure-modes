@@ -75,10 +75,30 @@ def gauss_conv_2d(ux, batch_dim=True):
     return out_reshaped
 
 
-def v_translation(x, u=None):
-    v = torch.ones_like(x)
-    if u is not None:
-        v = torch.cat([v, torch.ones_like(u(x))], -1)
+def cont_layer_onet(ux, x):
+    u2e = torch.nn.Linear(ux.shape[-1], 32)
+    x2e = torch.nn.Linear(x.shape[-1], 32)
+    e2o = torch.nn.Linear(64, ux.shape[-1])
+    input = torch.cat([x2e(x), u2e(ux)], -1)
+    out = e2o(input)
+    return out
+
+
+def v_translation(x, ux=None, coords_to_translate='all'):
+    if coords_to_translate in ['x', 'all']:
+        v = torch.ones_like(x)
+    elif isinstance(coords_to_translate, (list, tuple)):
+        v = torch.zeros_like(x)
+        for i in coords_to_translate:
+            v[i] = 1
+    else:
+        raise NotImplementedError(coords_to_translate)
+    if ux is not None:
+        if coords_to_translate in ['all', 'u']:
+            v_u = torch.ones_like(ux)
+        else:
+            v_u = torch.zeros_like(ux)
+        v = torch.cat([v, v_u], -1)
     return v
 
 
@@ -122,52 +142,52 @@ def change_along_flow(Fx, vx, x):
     return torch.einsum('...i,...i->...', dFdx, vx).unsqueeze(-1)
 
 
-def equiv_cont(cont_layer, u, v, x):
+# def equiv_cont(cont_layer, u, v, x):
+#
+#     x.requires_grad_(True)
+#     vx = v(x).detach()
+#     ux = u(x)
+#     vux = change_along_flow(ux, vx, x)
+#
+#     Qux = cont_layer(ux)
+#
+#     # this: vQu = <dQudx, vx> where
+#     # dQudx = Jac_u(Q).T . dudx = grad_x( Qux * dudx)
+#     dudx = grad(
+#         ux, x,
+#         grad_outputs=torch.ones_like(Qux),
+#         retain_graph=True,
+#         create_graph=True,
+#     )[0]
+#     dQudx = []
+#     for i in range(dudx.shape[-1]):
+#         dQudxi = grad(
+#             Qux * dudx[..., [i]].detach(), ux,
+#             grad_outputs=torch.ones_like(Qux),
+#             retain_graph=True,
+#             create_graph=True,
+#         )[0]
+#         dQudx.append(dQudxi)
+#     dQudx = torch.cat(dQudx, -1)
+#
+#     vQu = torch.einsum('...i,...i->...', dQudx, vx).unsqueeze(-1)
+#
+#     # instead of this, which does not work
+#     # because implicitly we are taking the derivative of
+#     # Qux.sum() wrt x and this mixes things up
+#     # vQu = change_along_flow(Qux, vx.detach(), x)
+#
+#     dQvu = grad(
+#         Qux * vux.detach(), ux,
+#         grad_outputs=torch.ones_like(Qux),
+#         retain_graph=True,
+#         create_graph=True,
+#     )[0]
+#
+#     return dQvu - vQu, dQvu, -vQu
 
-    x.requires_grad_(True)
-    vx = v(x).detach()
-    ux = u(x)
-    vux = change_along_flow(ux, vx, x)
 
-    Qux = cont_layer(ux)
-
-    # this: vQu = <dQudx, vx> where
-    # dQudx = Jac_u(Q).T . dudx = grad_x( Qux * dudx)
-    dudx = grad(
-        ux, x,
-        grad_outputs=torch.ones_like(Qux),
-        retain_graph=True,
-        create_graph=True,
-    )[0]
-    dQudx = []
-    for i in range(dudx.shape[-1]):
-        dQudxi = grad(
-            Qux * dudx[..., [i]].detach(), ux,
-            grad_outputs=torch.ones_like(Qux),
-            retain_graph=True,
-            create_graph=True,
-        )[0]
-        dQudx.append(dQudxi)
-    dQudx = torch.cat(dQudx, -1)
-
-    vQu = torch.einsum('...i,...i->...', dQudx, vx).unsqueeze(-1)
-
-    # instead of this, which does not work
-    # because implicitly we are taking the derivative of
-    # Qux.sum() wrt x and this mixes things up
-    # vQu = change_along_flow(Qux, vx.detach(), x)
-
-    dQvu = grad(
-        Qux * vux.detach(), ux,
-        grad_outputs=torch.ones_like(Qux),
-        retain_graph=True,
-        create_graph=True,
-    )[0]
-
-    return dQvu - vQu, dQvu, -vQu
-
-
-def equiv_cont_with_u(Q, u, v, x):
+def equiv_cont_with_u(Q, u, v, x, is_Q_onet=False):
     '''
     TODO: make v a basis of the Lie Algebra and not just a
     single vector field.
@@ -189,19 +209,24 @@ def equiv_cont_with_u(Q, u, v, x):
         retain_graph=True,
         create_graph=True,
     )[0]
-    dudx = torch.cat([dudx, torch.ones_like(dudx[..., [0]])], -1)
-    vux = torch.einsum('...i,...i->...', dudx, vx).unsqueeze(-1)
+    dudxu = torch.cat([dudx, torch.ones_like(dudx[..., [0]])], -1)
+    vux = torch.einsum('...i,...i->...', dudxu, vx).unsqueeze(-1)
 
-    Qux = Q(ux)
+    if is_Q_onet:
+        x_ = x.clone().detach()
+        x_.requires_grad_(True)
+        Qux = Q(ux, x_)
+    else:
+        Qux = Q(ux)
 
     # this: vQu = <dQudx, vx> where
-    # dQudx = Jac_u(Q).T . dudx = grad_x( Qux * dudx)
-    dudx = grad(
-        ux, x,
-        grad_outputs=torch.ones_like(Qux),
-        retain_graph=True,
-        create_graph=True,
-    )[0]
+    # dQudx = Jac_u(Q).T . dudx = grad_x( Qux * dudx )
+    # dudx = grad(
+    #     ux, x,
+    #     grad_outputs=torch.ones_like(Qux),
+    #     retain_graph=True,
+    #     create_graph=True,
+    # )[0]
 
     # computing derivative wrt coordinates
     dQudx = []
@@ -215,6 +240,14 @@ def equiv_cont_with_u(Q, u, v, x):
         dQudx.append(dQudxi)
     dQudx = torch.cat(dQudx, -1)
 
+    if is_Q_onet:
+        grad_x = grad(
+            Qux, x_,
+            grad_outputs=torch.ones_like(Qux),
+            retain_graph=True,
+            create_graph=True,
+        )[0]
+        dQudx = grad_x
     # computing jacobian of Q wrt output ux
     # # here there is a bug
     # jacQ = jacobian(
@@ -233,8 +266,10 @@ def equiv_cont_with_u(Q, u, v, x):
 
     # approximation with finite difference
     eps = 1e-3
-    dQdu = (Q(ux + eps) - Qux) / eps
-    # dQdu = (cont_layer(ux - eps) - 2 * Qux + cont_layer(ux + eps)) / eps
+    if is_Q_onet:
+        dQdu = (Q(ux + eps, x) - Qux) / eps
+    else:
+        dQdu = (Q(ux + eps) - Qux) / eps
     dQudx = torch.cat([dQudx, dQdu], -1)
     vQ = v(x, Qux).detach()
     vQu = torch.einsum('...i,...i->...', dQudx, vQ).unsqueeze(-1)
@@ -321,11 +356,13 @@ def run_2d_test():
 
     gauss_filter = partial(gauss_conv_2d)
     y = gauss_filter(u0(x))
+    # y = cont_layer_onet(u0(x), x)
 
-    # e, dQvu, mvQu = equiv_cont(gauss_filter, u0, v_translation, x)
-    # e, dQvu, mvQu = equiv_cont(gauss_filter, u0, v_rotation, x)
+    e, dQvu, mvQu = equiv_cont_with_u(gauss_filter, u0, partial(v_translation, coords_to_translate='x'), x)
+    # e, dQvu, mvQu = equiv_cont_with_u(gauss_filter, u0, v_rotation, x)
     # e, dQvu, mvQu = equiv_cont_with_u(gauss_filter, u0, v_scale, x)
-    e, dQvu, mvQu = equiv_cont_with_u(gauss_filter, u0, v_galilean_boost, x)
+    # e, dQvu, mvQu = equiv_cont_with_u(gauss_filter, u0, v_galilean_boost, x)
+    # e, dQvu, mvQu = equiv_cont_with_u(cont_layer_onet, u0, v_translation, x, is_Q_onet=True)
 
     eps = .2
     gQu = y - eps * mvQu

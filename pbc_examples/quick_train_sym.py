@@ -1,3 +1,5 @@
+from functools import partial
+
 import torch
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
@@ -7,14 +9,108 @@ import matplotlib.pyplot as plt
 from pbc_examples.data.params import to_numpy, create_params
 from pbc_examples.data.simple_pde import SimplePDEDataset
 from pbc_examples.data.plot import plot_solution_1d, plot_latents
+from pbc_examples.fourier_continuous_test import v_translation, equiv_cont_with_u
 from pbc_examples.modules.separation_embedding import SeparationEmbedding, EmbeddingModule
-from pbc_examples.modules.separation_embedding_modulation import SeparationEmbeddingMod
-from pbc_examples.modules.separation_param import SeparationParam, ParamModule
-from pbc_examples.modules.separation_param_modulation import SeparationParamM
-from pbc_examples.modules.separation_param_modulation_big import SeparationParamMod
+# from pbc_examples.modules.separation_embedding_modulation import SeparationEmbeddingMod
+# from pbc_examples.modules.separation_param import SeparationParam, ParamModule
+# from pbc_examples.modules.separation_param_modulation import SeparationParamM
+# from pbc_examples.modules.separation_param_modulation_big import SeparationParamMod
 # from pbc_examples.modules.separation_param_simple_latents import SeparationParamSimpleLatent, ModulatedLinear
-from pbc_examples.modules.separation_param_simple_latents_un import SeparationParamSimpleLatentUn
-from pbc_examples.modules.separation_param_simplest import SeparationParamSimplest
+# from pbc_examples.modules.separation_param_simple_latents_un import SeparationParamSimpleLatentUn
+from pbc_examples.modules.separation_param_simplest import *
+
+
+
+class SeparationParamSimplest(torch.nn.Module, ParamModule):
+    """Multiplying activations by space-time dependant scalars"""
+    def __init__(self, param_dim=None, x_param_dim=None, t_param_dim=None, separate_params=False):
+        super(SeparationParamSimplest, self).__init__()
+        self.separate_params = separate_params
+        assert self.separate_params
+
+        dim = 32
+        self.param_dim = param_dim
+        self.x_param_dim = x_param_dim
+        self.t_param_dim = t_param_dim
+        self.latent_dim = dim
+        emb_dim = dim
+        hidden_dim = dim
+        num_blocks = 6
+
+        # self.xp2ex = DNN([x_param_dim, hidden_dim, self.latent_dim, ], 'lrelu',)
+        self.xp2ex = DNN([x_param_dim,  hidden_dim, emb_dim, ], 'sin',)
+        # self.xp2exd = DNN([x_param_dim, hidden_dim, self.latent_dim, ], 'sin',)
+        # self.tp2et = DNN([t_param_dim, hidden_dim,  emb_dim, ], 'lrelu')
+        self.tp2et = DNN([t_param_dim,  hidden_dim, emb_dim, ], 'sin')
+        # self.p2e = SymmetricInitDNN([t_param_dim + x_param_dim, hidden_dim, hidden_dim, hidden_dim, emb_dim, ], 'sin')
+        # self.p2e = DNN([t_param_dim + x_param_dim,  hidden_dim, emb_dim, ], 'sin')
+        # self.d = DNN([hidden_dim, hidden_dim, hidden_dim], "sin")
+        self.phi = DNN([hidden_dim, hidden_dim, hidden_dim,  hidden_dim], "sin")
+        # self.phi = DNN([2 * self.latent_dim + emb_dim, hidden_dim, hidden_dim, hidden_dim, hidden_dim], "sin")
+        # self.f = DNN([2 + emb_dim, hidden_dim,], "sin")
+
+        # self.hx = DNN([1, hidden_dim, hidden_dim, hidden_dim, hidden_dim], "sin")
+        # self.zt = DNN([1, hidden_dim, hidden_dim, hidden_dim, hidden_dim], "sin")
+
+
+        self.h0 = torch.nn.Parameter(torch.zeros(1, hidden_dim))
+        # self.hx0 = torch.nn.Parameter(torch.zeros(1, hidden_dim))
+        # self.ht0 = torch.nn.Parameter(torch.zeros(1, hidden_dim))
+        self.fblocks = nn.ModuleList(
+            [BlockMod(2 + emb_dim, hidden_dim, 'sin',)
+            # [BlockMod(2 * self.latent_dim, hidden_dim, ['sin', 'exp'], [1, 1])
+             for _ in range(num_blocks)])
+
+        self.gh0 = torch.nn.Parameter(torch.zeros(1, hidden_dim))
+        self.gblocks = nn.ModuleList(
+            [BlockMod(hidden_dim + emb_dim, hidden_dim,  'sin',)
+            # [BlockMod(2 * self.latent_dim, hidden_dim, ['sin', 'exp'], [1, 1])
+             for _ in range(num_blocks)])
+
+        self.d = SymmetricInitDNN([hidden_dim, 1], "identity")
+
+    def forward(self, coords, param):
+        # ex : (B, emb_dim)
+        # x: (B, xgrid, 1)
+        x, t = coords[..., [0]], coords[..., [1]]
+
+        # (B, emb_dim) -> (B, X, emb_dim)
+        xparam, tparam = param['x_params'], param['t_params']
+        # e = self.p2e(torch.cat([xparam, tparam], -1))
+        ex = self.xp2ex(xparam.reshape((*xparam.shape[:-2], xparam.shape[-2] * xparam.shape[-1])))
+        # exb = self.xp2exd(xparam)
+        et = self.tp2et(tparam)
+
+        tr = t.unsqueeze(2).expand(-1, -1, x.shape[1], -1)
+        xr = x.unsqueeze(1).expand(-1, t.shape[1], -1, -1)
+        # h = self.d(torch.cat([xr, tr], -1))
+        # hx = self.hx(xr)
+        # zt = self.zt(tr)
+        etu = et.unsqueeze(1).unsqueeze(2).expand(-1, t.shape[1], x.shape[1], -1)
+        # eu = e.unsqueeze(1).unsqueeze(2).expand(-1, t.shape[1], x.shape[1], -1)
+
+        # zt_broadcasted = zt.unsqueeze(2).expand(-1, -1, px.shape[1], -1)
+        # px_broadcasted = px.unsqueeze(1).expand(-1, zt.shape[1], -1, -1)
+
+        h0_repeated = self.h0.unsqueeze(1).unsqueeze(2).expand(*tr.shape[:-1], self.h0.shape[1])
+        h = h0_repeated
+        for b in self.fblocks:
+            ztpx = torch.cat([xr, tr, etu], -1)
+            h = b(h, ztpx)
+
+        gh0_repeated = self.gh0.unsqueeze(1).unsqueeze(2).expand(*tr.shape[:-1], self.h0.shape[1])
+        gh = gh0_repeated
+        ex_broadcasted = ex.unsqueeze(1).unsqueeze(2).expand(-1, t.shape[1], x.shape[1], -1)
+        # e_broadcasted = e.unsqueeze(1).unsqueeze(2).expand(-1, t.shape[1], x.shape[1], -1)
+        for b in self.gblocks:
+            gh = b(gh, torch.cat([h, ex_broadcasted], -1))
+
+        u_pred = self.d(gh)
+
+        return {'u_pred': u_pred,
+                }
+
+
 
 
 class SeparationExperiment(pl.LightningModule):
@@ -55,43 +151,36 @@ class SeparationExperiment(pl.LightningModule):
         return aux
 
     def forward(self, input):
-        output = self.model(input['x'], input['t'], self._get_aux_input(input))
+        aux_inputs = self._get_aux_input(input)
+        u0_partial = partial(self.u0, omega=aux_inputs['x_params'])
+        u0_partial = partial(self.u0, omega=aux_inputs['x_params'])
+        aux_inputs['x_params'] = u0_partial(coords=input['x'])
+        output = self.model(input['x'], input['t'], aux_inputs)
         return output
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=0.002, weight_decay=0)
-        # emb_params = [p for n, p in self.model.named_parameters() if n in ['ex.weight', 'et.weight']]
-        # other_params = [p for n, p in self.model.named_parameters() if n not in ['ex.weight', 'et.weight']]
-        # optimizer = torch.optim.Adam([
-        #     {'params': emb_params, 'lr':0.002, 'weight_decay':0},
-        #     {'params': other_params, 'lr':0.002, 'weight_decay':0},
-        # ], lr=0.002)
-        # optimizer = torch.optim.Adam([
-        #     {'params': self.model.xt_param_group, 'lr':0.002, 'weight_decay':0},
-        #     {'params': self.model.x_param_group, 'lr':0.002, 'weight_decay':0},
-        #     {'params': self.model.t_param_group, 'lr':0.002, 'weight_decay':0},
-        # ], lr=0.002)
         return optimizer
+
+    def u0(self, coords, omega):
+        x = coords[..., [0]]
+        return torch.sin(omega * x)
 
     def training_step(self, train_batch, batch_idx):
         input = train_batch
-        output = self.model(input['x'], input['t'], self._get_aux_input(input))
+        aux_inputs = self._get_aux_input(input)
+        v = partial(v_translation, coords_to_translate=[0])
+
+        # u0_partial = partial(self.u0, omega=aux_inputs['x_params'])
+        # aux_inputs['x_params'] = u0_partial(coords=input['x'])
+        coords = torch.cat([input['x'], input['t']], -1)
+        coords.requires_grad_(True)
+        u0_partial = partial(self.u0, omega=aux_inputs['x_params'].unsqueeze(1))
+        aux_inputs['x_params'] = u0_partial(coords)
+        output = self.model(coords, aux_inputs)
+        equiv_cont_with_u(self.model, u0_partial, v, coords, is_Q_onet=True)
         loss = F.mse_loss(output['u_pred'], train_batch['u'])
         return loss
-
-    def _plot_swapped_embeddings(self, input, swap_index_1, swap_index_2):
-        i, j = swap_index_1, swap_index_2
-        exi, etj = self.model.get_ex(torch.tensor([i], device=input['x'].device)), \
-                   self.model.get_et(torch.tensor([j], device=input['x'].device))
-        output_ij = self.model(input['x'][[i]], input['t'][[j]], ex=exi, et=etj)
-        plot_solution_1d(to_numpy(output_ij['u_pred']).squeeze(),
-                         to_numpy(input['x']).squeeze(),
-                         to_numpy(input['t']).squeeze(),
-                         title=f'{self.prefix}: Extrap'
-                               f' sample (px, zt): {i, j},\n {input["system"][i], input["system"][j]}, \n'
-                               f' beta: {input["beta"][i].item(), input["beta"][j].item()},'
-                               f' nu: {input["nu"][i].item(), input["nu"][j].item()}\n'
-                               f' u0: {input["u0_str"][i], input["u0_str"][j]}\n')
 
     def _plot_solutions(self, input, output):
         u = output['u_pred']
@@ -142,7 +231,16 @@ class SeparationExperiment(pl.LightningModule):
             plt.show()
             self._plot_swapped_embeddings(input, 12, 2)
             plt.show()
-        output = self.model(input['x'], input['t'], self._get_aux_input(input))
+
+        aux_inputs = self._get_aux_input(input)
+
+        # u0_partial = partial(self.u0, omega=aux_inputs['x_params'])
+        # aux_inputs['x_params'] = u0_partial(coords=input['x'])
+        coords = torch.cat([input['x'], input['t']], -1)
+        aux_inputs['x_params'] = self.u0(coords, omega=aux_inputs['x_params'].unsqueeze(1))
+        output = self.model(coords, aux_inputs)
+
+        # output = self.model(input['x'], input['t'], self._get_aux_input(input))
         self._plot_solutions(input, output)
         if 'zt' in output and 'px' in output:
             self._plot_latents(input, output)
@@ -168,13 +266,14 @@ if __name__ == '__main__':
     dataset = SimplePDEDataset(data_args_list, params)
     train_loader = torch.utils.data.DataLoader(dataset, batch_size=len(dataset), num_workers=1)
 
-    val_dataset = SimplePDEDataset([(*d, 2) for d in valid_args_list], valid_params)
+    val_dataset = SimplePDEDataset([(*d, 1) for d in valid_args_list], valid_params)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=len(val_dataset), num_workers=1)
 
 
     # model = SeparationExperiment(len(dataset))
     if separate_params:
         x_param_dim, t_param_dim = dataset[0]['x_params'].shape[0], dataset[0]['t_params'].shape[0]
+        x_param_dim = dataset.data_args_list[0][5]
         model = SeparationExperiment(len(params), x_param_dim=x_param_dim, t_param_dim=t_param_dim, prefix=prefix)
     else:
         param_dim = dataset[0]['params'].shape[0]
