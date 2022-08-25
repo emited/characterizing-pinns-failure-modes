@@ -9,7 +9,7 @@ import numpy
 
 def low_pass_filter_1d(ux):
     uhat = rfft(ux.squeeze(-1))
-    filterhat = torch.zeros_like(uhat)
+    filterhat = torch.zeros_like(uhat, device=ux.device)
     filterhat[:5] = 0.50
     out = irfft(uhat * filterhat)
     return out.unsqueeze(-1)
@@ -86,24 +86,24 @@ def cont_layer_onet(ux, x):
 
 def v_translation(x, ux=None, coords_to_translate='all'):
     if coords_to_translate in ['x', 'all']:
-        v = torch.ones_like(x)
+        v = torch.ones_like(x, device=x.device)
     elif isinstance(coords_to_translate, (list, tuple)):
-        v = torch.zeros_like(x)
+        v = torch.zeros_like(x, device=x.device)
         for i in coords_to_translate:
             v[i] = 1
     else:
         raise NotImplementedError(coords_to_translate)
     if ux is not None:
         if coords_to_translate in ['all', 'u']:
-            v_u = torch.ones_like(ux)
+            v_u = torch.ones_like(ux, device=ux.device)
         else:
-            v_u = torch.zeros_like(ux)
+            v_u = torch.zeros_like(ux, device=ux.device)
         v = torch.cat([v, v_u], -1)
     return v
 
 
 def v_scale(x, ux):
-    v_x = torch.zeros_like(x)
+    v_x = torch.zeros_like(x, device=x.device)
     # v_u = torch.ones_like(ux)
     v_u = ux
     return torch.cat([v_x, v_u], -1)
@@ -111,11 +111,11 @@ def v_scale(x, ux):
 
 def v_rotation(x, ux=None):
     assert x.shape[-1] == 2
-    v = torch.ones_like(x)
+    v = torch.ones_like(x, device=x.device)
     v[..., 0] = x[..., 1]
     v[..., 1] = -x[..., 0]
     if ux is not None:
-        v = torch.cat([v, torch.ones_like(ux)], -1)
+        v = torch.cat([v, torch.ones_like(ux, device=ux.device)], -1)
     return v
 
 
@@ -123,9 +123,9 @@ def v_galilean_boost(x, ux):
     """Galilean boost of the heat equation"""
     x, t = x[..., [0]], x[..., [1]]
     vks = [
-        2 * t * torch.ones_like(x),
+        2 * t * torch.ones_like(x, device=x.device),
         torch.zeros_like(t),
-        - x * torch.ones_like(ux)
+        - x * torch.ones_like(ux, device=x.device)
     ]
     return torch.cat(vks, -1)
 
@@ -187,10 +187,12 @@ def change_along_flow(Fx, vx, x):
 #     return dQvu - vQu, dQvu, -vQu
 
 
-def equiv_cont_with_u(Q, u, v, x, is_Q_onet=False):
+def equiv_crit(Q, u, v, x, dudx=None, ux=None, Qux=None, Quxpeps=None):
     '''
     TODO: make v a basis of the Lie Algebra and not just a
     single vector field.
+    equivariance criterion, taking into account independant
+     and dependant variables
     :param Q: continuous operator taking as input u(x)s
     :param u: input function defined on x, should be differentiable
     :param v: vector field function, defined on (x, u(x)),
@@ -201,22 +203,28 @@ def equiv_cont_with_u(Q, u, v, x, is_Q_onet=False):
      equivariance of Q wrt to vector field v
     '''
     x.requires_grad_(True)
-    ux = u(x)
+    if ux is None:
+        ux = u(x)
+
     vx = v(x, ux).detach()
-    dudx = grad(
-        ux, x,
-        grad_outputs=torch.ones_like(ux),
-        retain_graph=True,
-        create_graph=True,
-    )[0]
-    dudxu = torch.cat([dudx, torch.ones_like(dudx[..., [0]])], -1)
+    if dudx is None:
+        dudx = grad(
+            ux, x,
+            grad_outputs=torch.ones_like(ux),
+            retain_graph=True,
+            create_graph=True,
+        )[0]
+    dudu =  torch.ones_like(dudx[..., [0]], device=dudx.device)
+    dudxu = torch.cat([dudx, dudu], -1)
     vux = torch.einsum('...i,...i->...', dudxu, vx).unsqueeze(-1)
 
-    if is_Q_onet:
-        x_ = x.clone().detach()
-        x_.requires_grad_(True)
-        Qux = Q(ux, x_)
-    else:
+    # if is_Q_onet:
+    #     x_ = x.clone().detach()
+    #     x_.requires_grad_(True)
+    #     Qux = Q(ux, x_)
+    # else:
+    #     Qux = Q(ux)
+    if Qux is None:
         Qux = Q(ux)
 
     # this: vQu = <dQudx, vx> where
@@ -240,14 +248,15 @@ def equiv_cont_with_u(Q, u, v, x, is_Q_onet=False):
         dQudx.append(dQudxi)
     dQudx = torch.cat(dQudx, -1)
 
-    if is_Q_onet:
-        grad_x = grad(
-            Qux, x_,
-            grad_outputs=torch.ones_like(Qux),
-            retain_graph=True,
-            create_graph=True,
-        )[0]
-        dQudx = grad_x
+    # if is_Q_onet:
+    #     grad_x = grad(
+    #         Qux, x_,
+    #         grad_outputs=torch.ones_like(Qux),
+    #         retain_graph=True,
+    #         create_graph=True,
+    #     )[0]
+    #     dQudx = grad_x
+
     # computing jacobian of Q wrt output ux
     # # here there is a bug
     # jacQ = jacobian(
@@ -266,10 +275,12 @@ def equiv_cont_with_u(Q, u, v, x, is_Q_onet=False):
 
     # approximation with finite difference
     eps = 1e-3
-    if is_Q_onet:
-        dQdu = (Q(ux + eps, x) - Qux) / eps
-    else:
-        dQdu = (Q(ux + eps) - Qux) / eps
+    # if is_Q_onet:
+    #     dQdu = (Q(ux + eps, x) - Qux) / eps
+    # else:
+    if Quxpeps is None:
+        Quxpeps = Q(ux + eps)
+    dQdu = (Quxpeps - Qux) / eps
     dQudx = torch.cat([dQudx, dQdu], -1)
     vQ = v(x, Qux).detach()
     vQu = torch.einsum('...i,...i->...', dQudx, vQ).unsqueeze(-1)
@@ -316,10 +327,23 @@ def equiv_cont_with_u(Q, u, v, x, is_Q_onet=False):
 #     plt.legend()
 #     plt.show()
 
+def finite_diff_grid_2d(ux, dx):
+    dudx1_fd = (ux[..., :, 1:, :] - ux[..., :, :-1, :]) / dx
+    pad1 = torch.zeros_like(dudx1_fd[..., :, [0], :], device=dudx1_fd.device)
+    dudx1_fd = torch.cat([dudx1_fd, pad1], -2)
+    dudx2_fd = (ux[..., 1:, :, :] - ux[..., :-1, :, :]) / dx
+    pad2 = torch.zeros_like(dudx1_fd[..., [0], :, :], device=dudx2_fd.device)
+    dudx2_fd = torch.cat([dudx2_fd, pad2], -3)
+    dudx = torch.cat([dudx1_fd, dudx2_fd], -1)
+    return dudx
 
 def run_2d_test():
     n = 100
     batch_dim = True
+    method_to_compute_dudx =  'finite_differences_on_grid'
+    # method_to_compute_dudx =  'finite_differences_with_function'
+    # method_to_compute_dudx =  'autograd'
+    # method_to_compute_dudx = 'none'
 
     x_ = torch.linspace(-math.pi, math.pi, n)
     y_ = torch.linspace(-math.pi, math.pi, n)
@@ -355,19 +379,60 @@ def run_2d_test():
         x = x.unsqueeze(0)
 
     gauss_filter = partial(gauss_conv_2d)
-    y = gauss_filter(u0(x))
+    u0x = u0(x)
+
+
+    # eps_x1 = eps * torch.cat([torch.ones_like(x[..., [0]]),
+    #                           torch.zeros_like(x[..., [1]])], -1)
+    # eps_x2 = eps * torch.cat([torch.zeros_like(x[..., [0]]),
+    #                           torch.ones_like(x[..., [1]])], -1)
+
+    if method_to_compute_dudx == 'finite_differences_on_grid':
+        dx = 2 * math.pi / n
+        du0dx = finite_diff_grid_2d(u0x, dx)
+    elif method_to_compute_dudx == 'autograd':
+        x.requires_grad_(True)
+        du0dx = grad(
+            u0x, x,
+            grad_outputs=torch.ones_like(u0x),
+            retain_graph=True,
+            create_graph=True,
+        )[0]
+    elif method_to_compute_dudx == 'finite_differences_with_function':
+        assert u0x.shape[-1] == 1
+        eps = 1e-4
+        eps_xs = torch.zeros((x.shape[-1], *x.shape), device=x.device)
+        for i in range(eps_xs.shape[0]):
+            eps_xs[i, ..., i] = eps
+        du0dx_fd_ = (u0(x.unsqueeze(0) + eps_xs) - u0x.unsqueeze(0)) / eps
+        du0dx = torch.swapaxes(du0dx_fd_, 0, -1).squeeze(0)
+        # du0dx1_fd = (u0(x + eps_xs[0]) - u0x) / eps
+        # du0dx2_fd = (u0(x + eps_xs[1]) - u0x) / eps
+    elif method_to_compute_dudx == 'none':
+        du0dx = None
+
+    if method_to_compute_dudx != 'none':
+        j = 1
+        plt.title('method_to_compute_dudx')
+        plt.imshow(du0dx[..., j].squeeze().detach().cpu().numpy())
+        plt.colorbar()
+        plt.show()
+
+    y = gauss_filter(u0x)
     # y = cont_layer_onet(u0(x), x)
 
-    e, dQvu, mvQu = equiv_cont_with_u(gauss_filter, u0, partial(v_translation, coords_to_translate='x'), x)
-    # e, dQvu, mvQu = equiv_cont_with_u(gauss_filter, u0, v_rotation, x)
-    # e, dQvu, mvQu = equiv_cont_with_u(gauss_filter, u0, v_scale, x)
-    # e, dQvu, mvQu = equiv_cont_with_u(gauss_filter, u0, v_galilean_boost, x)
-    # e, dQvu, mvQu = equiv_cont_with_u(cont_layer_onet, u0, v_translation, x, is_Q_onet=True)
+    e, dQvu, mvQu = equiv_crit(gauss_filter, u0,
+                                      partial(v_translation, coords_to_translate='x'),
+                                      x, dudx=du0dx)
+    # e, dQvu, mvQu = equiv_crit(gauss_filter, u0, v_rotation, x)
+    # e, dQvu, mvQu = equiv_crit(gauss_filter, u0, v_scale, x)
+    # e, dQvu, mvQu = equiv_crit(gauss_filter, u0, v_galilean_boost, x)
+    # e, dQvu, mvQu = equiv_crit(cont_layer_onet, u0, v_translation, x, is_Q_onet=True)
 
     eps = .2
     gQu = y - eps * mvQu
     Qgu = y + eps * dQvu
-    u0x = u0(x)
+    # u0x = u0(x)
 
     if batch_dim:
         u0x = u0x.squeeze(0)

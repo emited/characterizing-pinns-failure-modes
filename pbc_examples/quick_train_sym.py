@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from pbc_examples.data.params import to_numpy, create_params
 from pbc_examples.data.simple_pde import SimplePDEDataset
 from pbc_examples.data.plot import plot_solution_1d, plot_latents
-from pbc_examples.fourier_continuous_test import v_translation, equiv_cont_with_u
+from pbc_examples.fourier_continuous_test import v_translation, equiv_crit
 from pbc_examples.modules.separation_embedding import SeparationEmbedding, EmbeddingModule
 # from pbc_examples.modules.separation_embedding_modulation import SeparationEmbeddingMod
 # from pbc_examples.modules.separation_param import SeparationParam, ParamModule
@@ -178,7 +178,7 @@ class SeparationExperiment(pl.LightningModule):
         u0_partial = partial(self.u0, omega=aux_inputs['x_params'].unsqueeze(1))
         aux_inputs['x_params'] = u0_partial(coords)
         output = self.model(coords, aux_inputs)
-        equiv_cont_with_u(self.model, u0_partial, v, coords, is_Q_onet=True)
+        equiv_crit(self.model, u0_partial, v, coords, is_Q_onet=True)
         loss = F.mse_loss(output['u_pred'], train_batch['u'])
         return loss
 
