@@ -14,7 +14,7 @@ from torch.autograd import grad
 # from torch.autograd.functional import jacobian
 from functools import partial
 import numpy
-
+from functorch import jacrev
 
 #     # computing jacobian of Q wrt output ux
 #     # # here there is a bug
@@ -209,19 +209,6 @@ def equiv_crit_full_jac(Q, u, v, x, dudx=None, ux=None, Qux=None, Quxpeps=None, 
     '''
     x.requires_grad_(True)
 
-    from functorch import jacrev
-    x_ = torch.randn(5)
-
-    def f(x):
-        return x.sin()
-
-    def g(x):
-        result = f(x)
-        return result, result
-
-    jacobian_f, f_x = jacrev(g, has_aux=True)(x_)
-    assert torch.allclose(f_x, f(x_))
-
     # x: (b, w, h, d)
     # Qu(x): (b, w, h, 1)
     Qu = lambda x: Q(u(x))
@@ -247,6 +234,8 @@ def equiv_crit_full_jac(Q, u, v, x, dudx=None, ux=None, Qux=None, Quxpeps=None, 
     dQdu, (Qux, ux) = jacrev(Qr, has_aux=True)(ux)
     # dQdu_diag = 0
     # dQdx_ = torch.einsum('', dQdu_diag, dudx)
+    # TO DO: reduce batch dim to have the appropriate size
+    dQdu_diag = torch.einsum('bwhobwhi->bwhoi', dQdu).squeeze(-2)
 
     dudx = grad(
         ux, x,
@@ -255,8 +244,13 @@ def equiv_crit_full_jac(Q, u, v, x, dudx=None, ux=None, Qux=None, Quxpeps=None, 
         create_graph=True,
     )[0]
 
+    ux_, dudx_ = vjp(u, x, torch.ones_like(ux), create_graph=True)
+    assert torch.allclose(dudx, dudx_)
+
+    dQdu_dudx_diag = torch.einsum('bwho, bwhi -> bwhi', dQdu_diag, dudx)
     dQdx_diag = torch.einsum('bwhobwhi->bwhoi', dQdx).squeeze(-2)
 
+    assert torch.allclose(dQdu_dudx_diag, dQdx_diag)
     vx = v(x, ux).detach()
     if dudx is None:
         dudx = grad(
@@ -269,8 +263,8 @@ def equiv_crit_full_jac(Q, u, v, x, dudx=None, ux=None, Qux=None, Quxpeps=None, 
     dudxu = torch.cat([dudx, dudu], -1)
     vux = torch.einsum('...i,...i->...', dudxu, vx).unsqueeze(-1)
 
-    if last_dim_scalar:
-        ux = ux.squeeze(-1)
+    # if last_dim_scalar:
+    #     ux = ux.squeeze(-1)
 
     # dQdu = jacobian(
     #     Q, ux,
