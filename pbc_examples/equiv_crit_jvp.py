@@ -7,7 +7,7 @@ TODO:
 
 import torch
 from torch.autograd.functional import jacobian, vjp, jvp
-from functorch import jvp as jpv_functorch
+from functorch import jvp as jpv_functorch, jacrev
 import math
 import matplotlib.pyplot as plt
 from torch.autograd import grad
@@ -35,6 +35,163 @@ import numpy
 from pbc_examples.fourier_continuous_test import conv_2d_filter_given, finite_diff_grid_2d, v_rotation
 
 
+# def equiv_crit_full_jac(Q, u, v, x, dudx=None, ux=None, Qux=None, Quxpeps=None, last_dim_scalar=False):
+#     '''
+#     TODO: make v a basis of the Lie Algebra and not just a
+#     single vector field.
+#     equivariance criterion, taking into account independant
+#      and dependant variables
+#     :param Q: continuous operator taking as input u(x)s
+#     :param u: input function defined on x, should be differentiable
+#     :param v: vector field function, defined on (x, u(x)),
+#         associated to the group action
+#     :param x: coordinates
+#     deals with arbitrary batch dimensions
+#     :return: dQvu - vQu, a (signed) infinitesimal measure of
+#      equivariance of Q wrt to vector field v
+#     '''
+#     x.requires_grad_(True)
+#     if ux is None:
+#         ux = u(x)
+#
+#     if last_dim_scalar:
+#         ux = ux.unsqueeze(-1)
+#
+#     vx = v(x, ux).detach()
+#     if dudx is None:
+#         dudx = grad(
+#             ux, x,
+#             grad_outputs=torch.ones_like(ux),
+#             retain_graph=True,
+#             create_graph=True,
+#         )[0]
+#     dudu = torch.ones_like(dudx[..., [0]], device=dudx.device)
+#     dudxu = torch.cat([dudx, dudu], -1)
+#     vux = torch.einsum('...i,...i->...', dudxu, vx).unsqueeze(-1)
+#
+#     if last_dim_scalar:
+#         ux = ux.squeeze(-1)
+#
+#     # dQdu = jacobian(
+#     #     Q, ux,
+#     #     create_graph=True,
+#     # )
+#
+#     # _, vjp_fn = vjp(gaussian_filter, ux, torch.ones(Qux.shape))
+#     ux = ux.cuda()
+#     from time import time
+#     t0 = time()
+#     Qux, tangent_out = jvp(Q, (ux,), (torch.ones(ux.shape, device=ux.device),))
+#     print('time to compute jvp', time() - t0)
+#
+#     from time import time
+#     t0 = time()
+#     Qux, tangent_out = jpv_functorch(Q, (ux,), (torch.ones(ux.shape, device=ux.device),))
+#     print('time to compute jpv_functorch', time() - t0)
+#     # unit_vector = torch.ones(Qux.shape)
+#     # vjp_value = vjp_fn(torch.ones(Qux.shape))
+#     t0 = time()
+#
+#
+#     # jvp_value = jvp_fn(torch.ones(ux.shape))
+#     # ft_jacobian, = vmap(vjp_fn)(unit_vectors)
+#
+#     Q_reduced = lambda ux, batch_dim=0: Q(ux).sum(batch_dim)
+#     dQdu_reduced = jacobian(
+#         Q_reduced, ux,
+#         vectorize=True,
+#         create_graph=True,
+#     )
+#
+#     if last_dim_scalar:
+#         Qux = Qux.unsqueeze(-1)
+#
+#     # this: vQu = <dQudx, vx> where
+#     # dQudx = Jac_u(Q).T . dudx = grad_x( Qux * dudx )
+#     # dudx = grad(
+#     #     ux, x,
+#     #     grad_outputs=torch.ones_like(Qux),
+#     #     retain_graph=True,
+#     #     create_graph=True,
+#     # )[0]
+#
+#     # computing derivative wrt coordinates
+#     dQudx = []
+#     for i in range(dudx.shape[-1]):
+#         dQudxi = grad(
+#             Qux * dudx[..., [i]].detach(), ux,
+#             grad_outputs=torch.ones_like(Qux),
+#             retain_graph=True,
+#             create_graph=True,
+#         )[0]
+#         if last_dim_scalar:
+#             dQudxi = dQudxi.unsqueeze(-1)
+#         dQudx.append(dQudxi)
+#     dQudx = torch.cat(dQudx, -1)
+#
+#     # if is_Q_onet:
+#     #     grad_x = grad(
+#     #         Qux, x_,
+#     #         grad_outputs=torch.ones_like(Qux),
+#     #         retain_graph=True,
+#     #         create_graph=True,
+#     #     )[0]
+#     #     dQudx = grad_x
+#
+#     # computing jacobian of Q wrt output ux
+#     # # here there is a bug
+#     # jacQ = jacobian(
+#     #     cont_layer, ux,
+#     #     create_graph=True,
+#     # )
+#     # j = jacQ.squeeze(5).squeeze(2).reshape((jacQ.shape[0] * jacQ.shape[1], jacQ.shape[2]* jacQ.shape[3]))
+#     # j = torch.diagonal(j, dim1=2, dim2=3)
+#     # J = j.reshape((jacQ.shape[0], jacQ.shape[1]))
+#     # dQdu = grad(
+#     #         Qux, ux,
+#     #         grad_outputs=torch.ones_like(Qux),
+#     #         retain_graph=True,
+#     #         create_graph=True,
+#     #     )[0]
+#
+#     # approximation with finite difference
+#     eps = 1e-3
+#     # if is_Q_onet:
+#     #     dQdu = (Q(ux + eps, x) - Qux) / eps
+#     # else:
+#     if Quxpeps is None:
+#         Quxpeps = Q(ux + eps)
+#
+#     if last_dim_scalar:
+#         Quxpeps = Quxpeps.unsqueeze(-1)
+#
+#     dQdu = (Quxpeps - Qux) / eps
+#     dQudx = torch.cat([dQudx, dQdu], -1)
+#     vQ = v(x, Qux).detach()
+#     vQu = torch.einsum('...i,...i->...', dQudx, vQ).unsqueeze(-1)
+#
+#     vQ * Qux
+#
+#
+#     # instead of this, which does not work
+#     # because implicitly we are taking the derivative of
+#     # Qux.sum() wrt x and this mixes things up
+#     # vQu = change_along_flow(Qux, vx.detach(), x)
+#
+#     dQvu = grad(
+#         Qux * vux.detach(), ux,
+#         grad_outputs=torch.ones_like(Qux),
+#         retain_graph=True,
+#         create_graph=True,
+#     )[0]
+#
+#     if last_dim_scalar:
+#         vQu = vQu.squeeze(-1)
+#
+#     return dQvu - vQu, dQvu, -vQu
+
+
+
 def equiv_crit_full_jac(Q, u, v, x, dudx=None, ux=None, Qux=None, Quxpeps=None, last_dim_scalar=False):
     '''
     TODO: make v a basis of the Lie Algebra and not just a
@@ -51,11 +208,54 @@ def equiv_crit_full_jac(Q, u, v, x, dudx=None, ux=None, Qux=None, Quxpeps=None, 
      equivariance of Q wrt to vector field v
     '''
     x.requires_grad_(True)
-    if ux is None:
-        ux = u(x)
 
-    if last_dim_scalar:
-        ux = ux.unsqueeze(-1)
+    from functorch import jacrev
+    x_ = torch.randn(5)
+
+    def f(x):
+        return x.sin()
+
+    def g(x):
+        result = f(x)
+        return result, result
+
+    jacobian_f, f_x = jacrev(g, has_aux=True)(x_)
+    assert torch.allclose(f_x, f(x_))
+
+    # x: (b, w, h, d)
+    # Qu(x): (b, w, h, 1)
+    Qu = lambda x: Q(u(x))
+    dQdx = jacobian(
+        Qu, x,
+        create_graph=True,
+    )
+
+    def Qr(u):
+        Qu = Q(u)
+        return Qu, (Qu, u)
+
+    Qur = lambda x: Qr(u(x))
+    Qur_unb = lambda *x_unb: Qur(torch.stack(x_unb, -1))
+
+    x_unbindded = x.unbind(-1)
+    argnums = tuple(range(len(x_unbindded)))
+    for x_ in x_unbindded:
+        x_.requires_grad_(True)
+    dQdxr, (Qux, ux) = jacrev(Qur_unb, has_aux=True, argnums=argnums)(*x_unbindded)
+
+    ux = u(x)
+    dQdu, (Qux, ux) = jacrev(Qr, has_aux=True)(ux)
+    # dQdu_diag = 0
+    # dQdx_ = torch.einsum('', dQdu_diag, dudx)
+
+    dudx = grad(
+        ux, x,
+        grad_outputs=torch.ones_like(ux),
+        retain_graph=True,
+        create_graph=True,
+    )[0]
+
+    dQdx_diag = torch.einsum('bwhobwhi->bwhoi', dQdx).squeeze(-2)
 
     vx = v(x, ux).detach()
     if dudx is None:
@@ -69,12 +269,6 @@ def equiv_crit_full_jac(Q, u, v, x, dudx=None, ux=None, Qux=None, Quxpeps=None, 
     dudxu = torch.cat([dudx, dudu], -1)
     vux = torch.einsum('...i,...i->...', dudxu, vx).unsqueeze(-1)
 
-    # if is_Q_onet:
-    #     x_ = x.clone().detach()
-    #     x_.requires_grad_(True)
-    #     Qux = Q(ux, x_)
-    # else:
-    #     Qux = Q(ux)
     if last_dim_scalar:
         ux = ux.squeeze(-1)
 
@@ -129,7 +323,7 @@ def equiv_crit_full_jac(Q, u, v, x, dudx=None, ux=None, Qux=None, Quxpeps=None, 
             grad_outputs=torch.ones_like(Qux),
             retain_graph=True,
             create_graph=True,
-        )[0]
+            )[0]
         if last_dim_scalar:
             dQudxi = dQudxi.unsqueeze(-1)
         dQudx.append(dQudxi)
@@ -189,7 +383,7 @@ def equiv_crit_full_jac(Q, u, v, x, dudx=None, ux=None, Qux=None, Quxpeps=None, 
         grad_outputs=torch.ones_like(Qux),
         retain_graph=True,
         create_graph=True,
-    )[0]
+        )[0]
 
     if last_dim_scalar:
         vQu = vQu.squeeze(-1)
@@ -198,18 +392,19 @@ def equiv_crit_full_jac(Q, u, v, x, dudx=None, ux=None, Qux=None, Quxpeps=None, 
 
 
 def run_2d_test():
-    n = 1000
+    n = 40
     batch_dim = True
     # method_to_compute_dudx =  'finite_differences_on_grid'
     # method_to_compute_dudx =  'finite_differences_with_function'
     # method_to_compute_dudx =  'autograd'
     method_to_compute_dudx = 'none'
     last_dim_scalar = False
+    device = 'cuda'
 
     x_ = torch.linspace(-math.pi, math.pi, n)
     y_ = torch.linspace(-math.pi, math.pi, n)
     x_grid, y_grid = torch.meshgrid(x_, y_)
-    x = torch.stack([y_grid, x_grid], -1)
+    x = torch.stack([y_grid, x_grid], -1).to(device)
 
     def ring(x, last_dim_scalar=False):
         center = [0, 1]
@@ -290,7 +485,7 @@ def run_2d_test():
     e, dQvu, mvQu = equiv_crit_full_jac(gauss_filter, u0,
                                       # partial(v_translation, coords_to_translate='x'),
                                       v_rotation,
-                                      x, dudx=None, last_dim_scalar=last_dim_scalar)
+                                      x, dudx=None)
     # e, dQvu, mvQu = equiv_crit(gauss_filter, u0,
     #                                   # partial(v_translation, coords_to_translate='x'),
     #                                   v_rotation,
