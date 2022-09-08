@@ -25,7 +25,7 @@ def conv_2d_fft(ux, filter):
     return out.unsqueeze(-1) * 8
 
 
-def gauss_conv_2d_filter_given(channels=1, batch_dim=True, last_dim_scalar=False):
+def conv_2d_filter_given(channels=1, batch_dim=True, last_dim_scalar=False, filter='gaussian'):
     import torch.nn as nn
 
     # channels = ux.shape[-1]
@@ -50,6 +50,27 @@ def gauss_conv_2d_filter_given(channels=1, batch_dim=True, last_dim_scalar=False
                           -torch.sum((xy_grid - mean) ** 2., dim=-1) / \
                           (2 * variance)
                       )
+    if filter == 'non-symmetric':
+        where = (xy_grid - mean)[..., 0] > 0
+        new_variance = variance
+        new_xy_grid = xy_grid
+        # new_xy_grid[..., 0] = xy_grid[..., 0] * 2
+        new_variance = torch.ones(xy_grid.shape[-1], device=xy_grid.device) * variance
+        new_variance[0] = variance * 5
+        new_variance = new_variance.unsqueeze(0).unsqueeze(0)
+        new_kernel = (1. / (2. * math.pi * variance)) * \
+            torch.exp(
+                -torch.sum(((new_xy_grid - mean) ** 2.) / new_variance, dim=-1) / 2
+            )
+        gaussian_kernel[where] = new_kernel[where]
+        # gaussian_kernel = new_kernel
+
+        # # plot as testing
+        # import matplotlib.pyplot as plt
+        # plt.imshow(gaussian_kernel.detach().cpu().numpy(), origin='lower')
+        # plt.colorbar()
+        # plt.show()
+
     # Make sure sum of values in gaussian kernel equals 1.
     gaussian_kernel = gaussian_kernel / torch.sum(gaussian_kernel)
 
@@ -650,7 +671,7 @@ def run_2d_test():
         x = x.unsqueeze(0)
 
     # gauss_filter = partial(gauss_conv_2d, last_dim_scalar=last_dim_scalar)
-    gauss_filter = gauss_conv_2d_filter_given(channels=1, last_dim_scalar=last_dim_scalar)
+    gauss_filter = conv_2d_filter_given(channels=1, last_dim_scalar=last_dim_scalar)
     u0x = u0(x)
 
 
