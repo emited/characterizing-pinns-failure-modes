@@ -32,7 +32,7 @@ from functorch import jacrev
 #     #         create_graph=True,
 #     #     )[0]
 #
-from pbc_examples.fourier_continuous_test import conv_2d_filter_given, finite_diff_grid_2d, v_rotation
+from pbc_examples.fourier_continuous_test import conv_2d_filter_given, finite_diff_grid_2d, v_rotation, v_translation
 
 
 # def equiv_crit_full_jac(Q, u, v, x, dudx=None, ux=None, Qux=None, Quxpeps=None, last_dim_scalar=False):
@@ -192,7 +192,7 @@ from pbc_examples.fourier_continuous_test import conv_2d_filter_given, finite_di
 
 
 
-def equiv_crit_full_jac(Q, u, v, x, backend='jacrev', strategy='reverse-mode', compose_jacs=False):
+def equiv_crit_full_jac(Q, u, v, x, backend='jacrev', strategy='reverse-mode'):
     '''
     TODO: make v a basis of the Lie Algebra and not just a
     single vector field.
@@ -217,13 +217,7 @@ def equiv_crit_full_jac(Q, u, v, x, backend='jacrev', strategy='reverse-mode', c
     if backend == 'torch':
         # Qu(x): (b, w, h, 1)
         Qr = lambda ux: Q(ux).sum(0)
-        Qur = lambda x: Qr(u(x))
-        if not compose_jacs:
-            dQdx = jacobian(
-                Qur, x,
-                create_graph=True,
-                strategy=strategy,
-            )
+
         ux = u(x)
         Qux = Q(ux)
         dQdu = jacobian(
@@ -231,51 +225,38 @@ def equiv_crit_full_jac(Q, u, v, x, backend='jacrev', strategy='reverse-mode', c
             create_graph=True,
             strategy=strategy,
         )
-    elif backend == 'functorch':
-        if strategy == 'reverse-mode':
-            jac_func = jacrev
-        elif strategy == 'forward-mode':
-            jac_func = jacfwd
-        def Qr(u):
-            Qu = Q(u)
-            # we reduce the output, assuming the computations
-            # are independant for every sample in the batch
-            return Qu.sum(0), (Qu, u)
-
-        Qur = lambda x: Qr(u(x))
-        Qur_unb = lambda *x_unb: Qur(torch.stack(x_unb, -1))
-
-        x_unbindded = x.unbind(-1)
-        argnums = tuple(range(len(x_unbindded)))
-        for x_ in x_unbindded:
-            x_.requires_grad_(True)
-        if not compose_jacs:
-            dQdx_tuple, (Qux, ux) = jac_func(Qur_unb, has_aux=True, argnums=argnums)(*x_unbindded)
-            dQdx = torch.stack(dQdx_tuple, -1)
-        dQdu, (Qux, ux) = jac_func(Qr, has_aux=True)(ux)
-
-    # computing dudx
-    if backend == 'torch':
         dudx = grad(
             ux, x,
             grad_outputs=torch.ones_like(ux),
             retain_graph=True,
             create_graph=True,
         )[0]
+
     elif backend == 'functorch':
-        ux, dudx = vjp(u, x, torch.ones_like(ux), create_graph=True)
-    # assert torch.allclose(dudx, dudx_)
+        if strategy == 'reverse-mode':
+            jac_func = jacrev
+        elif strategy == 'forward-mode':
+            jac_func = jacfwd
+
+        def Qr_aux(u):
+            Qu = Q(u)
+            # we reduce the output, assuming the computations
+            # are independant for every sample in the batch
+            return Qu.sum(0), (Qu, u)
+
+        ux_shape = (*x.shape[:-1], 1)
+        ux, dudx = vjp(u, x, torch.ones(ux_shape, device=x.device), create_graph=True)
+        dQdu, (Qux, ux) = jac_func(Qr_aux, has_aux=True)(ux)
 
     # selecting diagonals
     # dQdu_diag: (b, w, h, i), assuming o = 1 (for now)
-    dQdu_diag = torch.einsum('whobwhi->bwhoi', dQdu)
+    dQdu_diag = torch.einsum('whobwhi -> bwhoi', dQdu)
     assert dQdu_diag.shape[-2] == 1
     # dQdu_diag = dQdu_diag.squeeze(-2)
-    if compose_jacs:
-        dQdu_dudx_diag = torch.einsum('bwhoi, bwhi -> bwhoi', dQdu_diag, dudx)
-        dQdx_diag = dQdu_dudx_diag
-    else:
-        dQdx_diag = torch.einsum('whobwhi -> bwhoi', dQdx)
+    # dQdu_dudx_diag = torch.einsum('bwhoi, bwhi -> bwhoi', dQdu_diag, dudx)
+    # dQdu_dudx_diag = (dQdu_diag * dudx.unsqueeze(-2)).squeeze(-1)
+    dQdx = torch.einsum('lkobwhi, bwhi -> blkoi', dQdu, dudx)
+    dQdx_diag = dQdx
 
     # assert torch.allclose(dQdu_dudx_diag, dQdx_diag)
     # TO DO: normally vx should have shape (b, w, h, k, i) and not (b, w, h, i)
@@ -288,20 +269,66 @@ def equiv_crit_full_jac(Q, u, v, x, backend='jacrev', strategy='reverse-mode', c
     # dQdu: (b, w, h, o, b, w, h, i)
     # vux: (b, w, h, i)
     # dQvu: (b, w, h, o)
-    dQvu = torch.einsum('lkobwhi, bwhi -> bwho', dQdu, vux)
+    # should be this instead of whats on the bottim
+    # dQvu = torch.einsum('lkobwhi, bwhi -> blkoi', dQdu, vux)
+    dQvu = torch.einsum('lkobwhi, bwhi -> blko', dQdu, vux)
     vQ = v(x, Qux).detach()
     # vQu = torch.einsum('...i,...i->...', dQudx, vQ).unsqueeze(-1)
     dQdxu = torch.cat([dQdx_diag, dQdu_diag], -1)
     # TO DO: normally vQ should have shape (b, w, h, o, i) and not (b, w, h, i)
     # quick fix
     vQ = vQ.unsqueeze(-2)
-    vQu = torch.einsum('bwhoi, bwhoi-> bwho', dQdxu, vQ)
+    vQu = torch.einsum('...i,...i->...', dQdxu, vQ)
 
     return dQvu - vQu, dQvu, -vQu
 
 
-def run_2d_test():
-    n = 60
+def plot(e, mvQu, dQvu, ux, Qux, batch_dim=True, eps=0.2):
+    gQu = Qux - eps * mvQu
+    Qgu = Qux + eps * dQvu
+
+    if batch_dim:
+        ux = ux.squeeze(0)
+        Qux = Qux.squeeze(0)
+        gQu = gQu.squeeze(0)
+        Qgu = Qgu.squeeze(0)
+        mvQu = mvQu.squeeze(0)
+        dQvu = dQvu.squeeze(0)
+        e = e.squeeze(0)
+
+    plt.figure(figsize=(6, 12))
+    plt.subplot(4, 2, 1)
+    plt.title('u0')
+    plt.imshow(ux.squeeze(-1).detach().cpu().numpy(), origin='lower')
+    plt.colorbar()
+    plt.subplot(4, 2, 2)
+    plt.title('Qu')
+    plt.imshow(Qux.squeeze(-1).detach().cpu().numpy(), origin='lower')
+    plt.colorbar()
+    plt.subplot(4, 2, 3)
+    plt.title('gQu')
+    plt.imshow(gQu.squeeze(-1).detach().cpu().numpy(),  origin='lower')
+    plt.colorbar()
+    plt.subplot(4, 2, 4)
+    plt.title('Qgu')
+    plt.imshow(Qgu.squeeze(-1).detach().cpu().numpy(),  origin='lower')
+    plt.colorbar()
+    plt.subplot(4, 2, 5)
+    plt.title('vQu')
+    plt.imshow(-mvQu.squeeze(-1).detach().cpu().numpy(),  origin='lower')
+    plt.colorbar()
+    plt.subplot(4, 2, 6)
+    plt.title('dQvu')
+    plt.imshow(dQvu.squeeze(-1).detach().cpu().numpy(),  origin='lower')
+    plt.colorbar()
+    plt.subplot(4, 2, 7)
+    plt.title('e')
+    plt.imshow(e.squeeze(-1).detach().cpu().numpy(), origin='lower')
+    plt.colorbar()
+    plt.show()
+
+
+def run_2d_test(n=100):
     batch_dim = True
     # method_to_compute_dudx =  'finite_differences_on_grid'
     # method_to_compute_dudx =  'finite_differences_with_function'
@@ -390,12 +417,28 @@ def run_2d_test():
         plt.colorbar()
         plt.show()
 
-    y = gauss_filter(u0x.cuda())
-    # y = cont_layer_onet(u0(x), x)
-    e, dQvu, mvQu = equiv_crit_full_jac(gauss_filter, u0,
-                                        # partial(v_translation, coords_to_translate='x'),
-                                        v_rotation, x,
-                                        backend='torch', compose_jacs=False)
+    Qu0x = gauss_filter(u0x.cuda())
+    from time import time
+    for backend in ['torch', 'functorch']:
+        for strategy in ['forward-mode', 'reverse-mode']:
+        # for strategy in ['reverse-mode']:
+            if backend == 'torch' and strategy == 'forward-mode':
+                continue
+            t0 = time()
+            # if not(backend == 'functorch' and strategy == 'reverse-mode'):
+            #     continue
+            e, dQvu, mvQu = equiv_crit_full_jac(gauss_filter, u0,
+                                                v_rotation,
+                                                # v_translation,
+                                                x,
+                                                backend=backend,
+                                                strategy=strategy,
+                                                )
+            plot(e, mvQu, dQvu, u0x, Qu0x, batch_dim=batch_dim, eps=0.2)
+            print(f'backend: {backend},'
+                  f' strategy: {strategy},'
+                  f' time: {time() - t0} seconds')
+
     # e, dQvu, mvQu = equiv_crit(gauss_filter, u0,
     #                                   # partial(v_translation, coords_to_translate='x'),
     #                                   v_rotation,
@@ -405,51 +448,7 @@ def run_2d_test():
     # e, dQvu, mvQu = equiv_crit(gauss_filter, u0, v_galilean_boost, x)
     # e, dQvu, mvQu = equiv_crit(cont_layer_onet, u0, v_translation, x, is_Q_onet=True)
 
-    eps = .2
-    gQu = y - eps * mvQu
-    Qgu = y + eps * dQvu
-    # u0x = u0(x)
-
-    if batch_dim:
-        u0x = u0x.squeeze(0)
-        y = y.squeeze(0)
-        gQu = gQu.squeeze(0)
-        Qgu = Qgu.squeeze(0)
-        mvQu = mvQu.squeeze(0)
-        dQvu = dQvu.squeeze(0)
-        e = e.squeeze(0)
-
-    plt.figure(figsize=(6, 12))
-    plt.subplot(4, 2, 1)
-    plt.title('u0')
-    plt.imshow(u0x.squeeze(-1).detach().cpu().numpy(), origin='lower')
-    plt.colorbar()
-    plt.subplot(4, 2, 2)
-    plt.title('ut')
-    plt.imshow(y.squeeze(-1).detach().cpu().numpy(), origin='lower')
-    plt.colorbar()
-    plt.subplot(4, 2, 3)
-    plt.title('gQu')
-    plt.imshow(gQu.squeeze(-1).detach().cpu().numpy(),  origin='lower')
-    plt.colorbar()
-    plt.subplot(4, 2, 4)
-    plt.title('Qgu')
-    plt.imshow(Qgu.squeeze(-1).detach().cpu().numpy(),  origin='lower')
-    plt.colorbar()
-    plt.subplot(4, 2, 5)
-    plt.title('vQu')
-    plt.imshow(-mvQu.squeeze(-1).detach().cpu().numpy(),  origin='lower')
-    plt.colorbar()
-    plt.subplot(4, 2, 6)
-    plt.title('dQvu')
-    plt.imshow(dQvu.squeeze(-1).detach().cpu().numpy(),  origin='lower')
-    plt.colorbar()
-    plt.subplot(4, 2, 7)
-    plt.title('e')
-    plt.imshow(e.squeeze(-1).detach().cpu().numpy(), origin='lower')
-    plt.colorbar()
-    plt.show()
 
 if __name__ == '__main__':
     # run_1d_test()
-    run_2d_test()
+    run_2d_test(100)

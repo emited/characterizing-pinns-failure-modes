@@ -209,7 +209,7 @@ def v_rotation(x, ux=None):
     v[..., 0] = x[..., 1]
     v[..., 1] = -x[..., 0]
     if ux is not None:
-        v = torch.cat([v, torch.ones_like(ux, device=ux.device)], -1)
+        v = torch.cat([v, torch.zeros_like(ux, device=ux.device)], -1)
     return v
 
 
