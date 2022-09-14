@@ -23,6 +23,8 @@ def diag_jac(f, x):
 
 def diag_jac_approx(f, x, nsamples=10, timeit=False):
     y, vjp_fn = vjp(f, x)
+
+    # generating random vector of +1 and -1
     vs = torch.randint(0, 2, size=(nsamples, *y.shape), device=y.device) * 2 - 1
 
     # # using for loop
