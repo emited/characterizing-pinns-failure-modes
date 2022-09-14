@@ -266,8 +266,11 @@ def equiv_crit_full_jac(Q, u, v, x, backend='functorch', strategy='reverse-mode'
     # dQdu_diag = dQdu_diag.squeeze(-2)
     # dQdu_dudx_diag = torch.einsum('bwhoi, bwhi -> bwhoi', dQdu_diag, dudx)
     # dQdu_dudx_diag = (dQdu_diag * dudx.unsqueeze(-2)).squeeze(-1)
-    dQdx = torch.einsum('lkobwhi, bwhi -> blkoi', dQdu, dudx)
-    dQdx_diag = dQdx
+    DQu_dudx = torch.einsum('lkobwhi, bwhi -> blkoi', dQdu, dudx)
+    dudu = torch.ones_like(ux, device=ux.device)
+    DQu_dudu = torch.einsum('lkobwhi, bwhi -> blkoi', dQdu, dudu)
+    dQdx_diag = DQu_dudx
+    dQdu_diag = DQu_dudu
 
     # assert torch.allclose(dQdu_dudx_diag, dQdx_diag)
     # TO DO: normally vx should have shape (b, w, h, k, i) and not (b, w, h, i)
@@ -295,7 +298,7 @@ def equiv_crit_full_jac(Q, u, v, x, backend='functorch', strategy='reverse-mode'
 
 
 
-def equiv_crit_fast(Q, u, v_coeff_fn, x, dQdu_strategy='zeros', diag_approx_samples=None):
+def equiv_crit_fast(Q, u, v_coeff_fn, x):
     '''
     TODO: make v a basis of the Lie Algebra and not just a
     single vector field.
@@ -310,7 +313,6 @@ def equiv_crit_fast(Q, u, v_coeff_fn, x, dQdu_strategy='zeros', diag_approx_samp
     :return: dQvu - vQu, a (signed) infinitesimal measure of
      equivariance of Q wrt to vector field v
     '''
-
 
     # x: (b, w, h, d)
     x.requires_grad_(True)
@@ -344,11 +346,7 @@ def equiv_crit_fast(Q, u, v_coeff_fn, x, dQdu_strategy='zeros', diag_approx_samp
     # dudx: (b, w, h, d)
 
     # jvp_xs = vmap(jvp, in_dims=(None, (-1,), (-1,)))
-    def jvpp(*x):
-        # print(x)
-        return jvp(*x)
-
-    DQu_dudx_ij_fn = jvpp
+    DQu_dudx_ij_fn = jvp
     DQu_dudx_i_fn_ = vmap(DQu_dudx_ij_fn, in_dims=(None, (None,), (-1,)))
     def DQu_dudx_i_fn(*x):
         out, jvp_out = DQu_dudx_i_fn_(*x)
@@ -356,35 +354,39 @@ def equiv_crit_fast(Q, u, v_coeff_fn, x, dQdu_strategy='zeros', diag_approx_samp
                torch.swapaxes(jvp_out.unsqueeze(-1), 0, -1).squeeze(0)
     DQu_dudx_fn = vmap(DQu_dudx_i_fn, in_dims=(None, (0,), (0,)))
     # DQu_dudx: (b, w, h, d)
-    Quxs, DQu_dudx = DQu_dudx_fn(Q_ij, (ux.squeeze(-1),), (dudx,))
+    dudu = torch.ones_like(ux, device=dudx.device)
+    dudxu = torch.cat([dudx, dudu], -1)
+    Quxs, DQu_dudxu = DQu_dudx_fn(Q_ij, (ux.squeeze(-1),), (dudxu,))
     Qux = Quxs[..., [0]]
-    dQdx = DQu_dudx
-    dQdx = dQdx.unsqueeze(-2)
+    dQdxu = DQu_dudxu
+    dQdxu = dQdxu.unsqueeze(-2)
 
     #############################
     #############################
-    # dQdu: temporary calculation
-    if dQdu_strategy == 'full_jac':
-        strategy = 'reverse-mode'
-        if strategy == 'reverse-mode':
-            jac_func = jacrev
-        elif strategy == 'forward-mode':
-            jac_func = jacfwd
-        def Qr_aux(u):
-            Qu = Q(u)
-            # we reduce the output, assuming the computations
-            # are independant for every sample in the batch
-            return Qu.sum(0), Qu
-        dQdu, _ = jac_func(Qr_aux, has_aux=True)(ux)
-        dQdu_diag = torch.einsum('whobwhi -> bwhoi', dQdu)
-        # dQdu_diag = dQdu_diag.squeeze(-2)
-    elif dQdu_strategy == 'zeros':
-        dQdu_diag = torch.zeros((*dQdx.shape[:-1], 1), device=dQdx.device)
-    elif dQdu_strategy == 'approx':
-        dQdu_diag = diag_jac_approx(Q, ux, nsamples=diag_approx_samples, timeit=True)
-        dQdu_diag = dQdu_diag.unsqueeze(-2)
-    else:
-        raise NotImplementedError(dQdu_strategy)
+    # # dQdu: temporary calculation
+    # dQdu_strategy = 'zeros'
+    # diag_approx_samples = None
+    # if dQdu_strategy == 'full_jac':
+    #     strategy = 'reverse-mode'
+    #     if strategy == 'reverse-mode':
+    #         jac_func = jacrev
+    #     elif strategy == 'forward-mode':
+    #         jac_func = jacfwd
+    #     def Qr_aux(u):
+    #         Qu = Q(u)
+    #         # we reduce the output, assuming the computations
+    #         # are independant for every sample in the batch
+    #         return Qu.sum(0), Qu
+    #     dQdu, _ = jac_func(Qr_aux, has_aux=True)(ux)
+    #     dQdu_diag = torch.einsum('whobwhi -> bwhoi', dQdu)
+    #     # dQdu_diag = dQdu_diag.squeeze(-2)
+    # elif dQdu_strategy == 'zeros':
+    #     dQdu_diag = torch.zeros((*dQdx.shape[:-1], 1), device=dQdx.device)
+    # elif dQdu_strategy == 'approx':
+    #     dQdu_diag = diag_jac_approx(Q, ux, nsamples=diag_approx_samples, timeit=True)
+    #     dQdu_diag = dQdu_diag.unsqueeze(-2)
+    # else:
+    #     raise NotImplementedError(dQdu_strategy)
 
     # plt.subplot(1, 3, 1)
     # plt.imshow(Quxxx[0].squeeze().detach().cpu().numpy())
@@ -397,7 +399,7 @@ def equiv_crit_fast(Q, u, v_coeff_fn, x, dQdu_strategy='zeros', diag_approx_samp
     #############################
     #############################
 
-    dQdxu = torch.cat([dQdx, dQdu_diag], -1)
+    # dQdxu = torch.cat([dQdx, dQdu], -1)
 
     vQ_coeff = v_coeff_fn(x, Qux).detach()
     vQ_coeff = vQ_coeff.unsqueeze(-2)
@@ -462,7 +464,7 @@ def plot(e, mvQu, dQvu, ux, Qux, batch_dim=True, eps=0.2):
 
 
 def run_2d_test(n=100):
-    batch_size = 32
+    batch_size = 2
     batch_dim = True
     # method_to_compute_dudx =  'finite_differences_on_grid'
     # method_to_compute_dudx =  'finite_differences_with_function'
@@ -573,12 +575,9 @@ def run_2d_test(n=100):
             #                                     strategy=strategy,
             #                                     )
             e, dQvu, mvQu = equiv_crit_fast(gauss_filter, u0,
-                                            v_rotation,
-                                            # v_translation,
+                                            # v_rotation,
+                                            partial(v_translation, coords_to_translate='u'),
                                             x,
-                                            # dQdu_strategy='full_jac',
-                                            dQdu_strategy='approx',
-                                            diag_approx_samples=100,
                                             # backend=backend,
                                             # strategy=strategy,
                                             )
@@ -598,4 +597,4 @@ def run_2d_test(n=100):
 
 
 if __name__ == '__main__':
-    run_2d_test(200)
+    run_2d_test(80)

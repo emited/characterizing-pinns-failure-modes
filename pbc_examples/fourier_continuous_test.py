@@ -181,12 +181,11 @@ def cont_layer_onet(ux, x):
 def v_translation(x, ux=None, coords_to_translate='all'):
     if coords_to_translate in ['x', 'all']:
         v = torch.ones_like(x, device=x.device)
-    elif isinstance(coords_to_translate, (list, tuple)):
-        v = torch.zeros_like(x, device=x.device)
-        for i in coords_to_translate:
-            v[i] = 1
     else:
-        raise NotImplementedError(coords_to_translate)
+        v = torch.zeros_like(x, device=x.device)
+    if isinstance(coords_to_translate, (list, tuple)):
+        for coord in coords_to_translate:
+            v[coord] = 1
     if ux is not None:
         if coords_to_translate in ['all', 'u']:
             v_u = torch.ones_like(ux, device=ux.device)
