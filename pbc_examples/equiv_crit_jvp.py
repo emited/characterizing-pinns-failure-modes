@@ -3,6 +3,7 @@ TODO:
 - make a filtering operator which is non-symmetric and non-linear for tests ---> OK
 - implement jacobian version of equiv crit and compare with jvp version
 - implement diagonal approximation of jacobian, and compare with full jacobian computation
+    ---> OK but to no use now
 """
 
 import torch
@@ -13,8 +14,9 @@ import matplotlib.pyplot as plt
 from torch.autograd import grad as grad_torch
 # from torch.autograd.functional import jacobian
 from functools import partial
-import numpy
+import numpy as np
 from functorch import jacrev
+from time import time
 
 #     # computing jacobian of Q wrt output ux
 #     # # here there is a bug
@@ -361,46 +363,6 @@ def equiv_crit_fast(Q, u, v_coeff_fn, x):
     dQdxu = DQu_dudxu
     dQdxu = dQdxu.unsqueeze(-2)
 
-    #############################
-    #############################
-    # # dQdu: temporary calculation
-    # dQdu_strategy = 'zeros'
-    # diag_approx_samples = None
-    # if dQdu_strategy == 'full_jac':
-    #     strategy = 'reverse-mode'
-    #     if strategy == 'reverse-mode':
-    #         jac_func = jacrev
-    #     elif strategy == 'forward-mode':
-    #         jac_func = jacfwd
-    #     def Qr_aux(u):
-    #         Qu = Q(u)
-    #         # we reduce the output, assuming the computations
-    #         # are independant for every sample in the batch
-    #         return Qu.sum(0), Qu
-    #     dQdu, _ = jac_func(Qr_aux, has_aux=True)(ux)
-    #     dQdu_diag = torch.einsum('whobwhi -> bwhoi', dQdu)
-    #     # dQdu_diag = dQdu_diag.squeeze(-2)
-    # elif dQdu_strategy == 'zeros':
-    #     dQdu_diag = torch.zeros((*dQdx.shape[:-1], 1), device=dQdx.device)
-    # elif dQdu_strategy == 'approx':
-    #     dQdu_diag = diag_jac_approx(Q, ux, nsamples=diag_approx_samples, timeit=True)
-    #     dQdu_diag = dQdu_diag.unsqueeze(-2)
-    # else:
-    #     raise NotImplementedError(dQdu_strategy)
-
-    # plt.subplot(1, 3, 1)
-    # plt.imshow(Quxxx[0].squeeze().detach().cpu().numpy())
-    # plt.subplot(1, 3, 2)
-    # plt.imshow(Quxs[0, ..., 0].squeeze().T.detach().cpu().numpy())
-    # plt.subplot(1, 3, 3)
-    # plt.imshow(Quxs[0, ..., 1].squeeze().detach().cpu().numpy())
-    # plt.show()
-    # print('plotted$')
-    #############################
-    #############################
-
-    # dQdxu = torch.cat([dQdx, dQdu], -1)
-
     vQ_coeff = v_coeff_fn(x, Qux).detach()
     vQ_coeff = vQ_coeff.unsqueeze(-2)
     vQu = torch.einsum('...i,...i->...', dQdxu, vQ_coeff)
@@ -463,8 +425,8 @@ def plot(e, mvQu, dQvu, ux, Qux, batch_dim=True, eps=0.2):
     plt.show()
 
 
-def run_2d_test(n=100):
-    batch_size = 2
+def run_2d_test(n=100, batch_size=1, strategy='fast'):
+    equiv_crit = equiv_crit_fast if strategy == 'fast' else equiv_crit_full_jac
     batch_dim = True
     # method_to_compute_dudx =  'finite_differences_on_grid'
     # method_to_compute_dudx =  'finite_differences_with_function'
@@ -557,44 +519,101 @@ def run_2d_test(n=100):
         plt.colorbar()
         plt.show()
 
+    # Qu0x = gauss_filter(u0x.cuda())
+    # from time import time
+    # for backend in ['torch', 'functorch']:
+    #     for strategy in ['forward-mode', 'reverse-mode']:
+    #     # for strategy in ['reverse-mode']:
+    #         if backend == 'torch' and strategy == 'forward-mode':
+    #             continue
+    #         t0 = time()
+    #         if not(backend == 'functorch' and strategy == 'reverse-mode'):
+    #             continue
+    #         # e, dQvu, mvQu = equiv_crit_full_jac(gauss_filter, u0,
+    #         #                                     v_rotation,
+    #         #                                     # v_translation,
+    #         #                                     x,
+    #         #                                     backend=backend,
+    #         #                                     strategy=strategy,
+    #         #                                     )
+    #         e, dQvu, mvQu = equiv_crit_fast(gauss_filter, u0,
+    #                                         # v_rotation,
+    #                                         partial(v_translation, coords_to_translate='u'),
+    #                                         x,
+    #                                         # backend=backend,
+    #                                         # strategy=strategy,
+    #                                         )
+    #         # plot(e, mvQu, dQvu, u0x, Qu0x, batch_dim=batch_dim, eps=0.2)
+    #         print(f'backend: {backend},'
+    #               f' strategy: {strategy},'
+    #               f' time: {time() - t0} seconds')
+
     Qu0x = gauss_filter(u0x.cuda())
-    from time import time
-    for backend in ['torch', 'functorch']:
-        for strategy in ['forward-mode', 'reverse-mode']:
-        # for strategy in ['reverse-mode']:
-            if backend == 'torch' and strategy == 'forward-mode':
-                continue
-            t0 = time()
-            if not(backend == 'functorch' and strategy == 'reverse-mode'):
-                continue
-            # e, dQvu, mvQu = equiv_crit_full_jac(gauss_filter, u0,
-            #                                     v_rotation,
-            #                                     # v_translation,
-            #                                     x,
-            #                                     backend=backend,
-            #                                     strategy=strategy,
-            #                                     )
-            e, dQvu, mvQu = equiv_crit_fast(gauss_filter, u0,
-                                            # v_rotation,
-                                            partial(v_translation, coords_to_translate='u'),
-                                            x,
-                                            # backend=backend,
-                                            # strategy=strategy,
-                                            )
-            plot(e, mvQu, dQvu, u0x, Qu0x, batch_dim=batch_dim, eps=0.2)
-            print(f'backend: {backend},'
-                  f' strategy: {strategy},'
-                  f' time: {time() - t0} seconds')
-
-    # e, dQvu, mvQu = equiv_crit(gauss_filter, u0,
-    #                                   # partial(v_translation, coords_to_translate='x'),
-    #                                   v_rotation,
-    #                                   x, dudx=du0dx, last_dim_scalar=last_dim_scalar)
-    # e, dQvu, mvQu = equiv_crit(gauss_filter, u0, v_rotation, x)
-    # e, dQvu, mvQu = equiv_crit(gauss_filter, u0, v_scale, x)
-    # e, dQvu, mvQu = equiv_crit(gauss_filter, u0, v_galilean_boost, x)
-    # e, dQvu, mvQu = equiv_crit(cont_layer_onet, u0, v_translation, x, is_Q_onet=True)
-
+    t0 = time()
+    e, dQvu, mvQu = equiv_crit(gauss_filter, u0,
+                                    # v_rotation,
+                                    partial(v_translation, coords_to_translate='u'),
+                                    x,
+                                    # backend=backend,
+                                    # strategy=strategy,
+                                    )
+    t_f = time() - t0
+    # plot(e, mvQu, dQvu, u0x, Qu0x, batch_dim=batch_dim, eps=0.2)
+    print(f' time: {t_f} seconds')
+    return t_f
 
 if __name__ == '__main__':
-    run_2d_test(80)
+    # strategy = 'full'
+    strategy = 'fast'
+    if strategy == 'full':
+        strategy_str = 'Full Jacobian'
+    elif strategy == 'fast':
+        strategy_str = 'Fast JVP'
+
+
+    n = 64
+    batch_sizes = [1, 2, 4, 8, 16, 32, 64, 128]
+    times = []
+    for batch_size in batch_sizes:
+        print(f'batch size: {batch_size}')
+        try:
+            etime = run_2d_test(n, batch_size=batch_size, strategy=strategy)
+            times.append(etime)
+        except:
+            print('Out of mem /!\ ')
+            times.append(np.nan)
+    times, batch_sizes = np.array(times), np.array(batch_sizes)
+    plt.title(f'Computational time of Equiv Criteria with {strategy_str}, grid: {n}²')
+    plt.ylabel('seconds')
+    plt.xlabel('batch size')
+    plt.plot(batch_sizes, times)
+    plt.scatter(batch_sizes[times!=times],
+                np.zeros_like(batch_sizes)[times!=times],
+                c='r', label='Out of memory')
+    plt.xticks(batch_sizes)
+    plt.legend()
+    plt.show()
+
+    ns = [32, 64, 128, 256, 512, 1024, 2048]
+    batch_size = 1
+    times = []
+    for n in ns:
+        print(f'n: {n}')
+        try:
+            etime = run_2d_test(n, batch_size=batch_size, strategy=strategy)
+            times.append(etime)
+        except:
+            print('Out of mem /!\ ')
+            times.append(np.nan)
+    times, ns = np.array(times), np.array(ns)
+    plt.title(f'Computational time of Equiv Criteria with {strategy_str}, batch: {batch_size}')
+    plt.ylabel('seconds')
+    plt.xlabel('n²')
+    ns2 = ns ** 2
+    plt.plot(ns2, times)
+    plt.scatter(ns2[times!=times],
+                np.zeros_like(ns2)[times!=times],
+                c='r', label='Out of memory')
+    plt.xticks(ticks=ns2, labels=[f'{n}²' for n in ns])
+    plt.legend()
+    plt.show()
