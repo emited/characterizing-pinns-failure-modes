@@ -263,8 +263,8 @@ def equiv_crit_full_jac(Q, u, v, x, backend='functorch', strategy='reverse-mode'
 
     # selecting diagonals
     # dQdu_diag: (b, w, h, i), assuming o = 1 (for now)
-    dQdu_diag = torch.einsum('whobwhi -> bwhoi', dQdu)
-    assert dQdu_diag.shape[-2] == 1
+    dQdu_diag_test = torch.einsum('whobwhi -> bwhoi', dQdu)
+    # assert dQdu_diag.shape[-2] == 1
     # dQdu_diag = dQdu_diag.squeeze(-2)
     # dQdu_dudx_diag = torch.einsum('bwhoi, bwhi -> bwhoi', dQdu_diag, dudx)
     # dQdu_dudx_diag = (dQdu_diag * dudx.unsqueeze(-2)).squeeze(-1)
@@ -272,6 +272,8 @@ def equiv_crit_full_jac(Q, u, v, x, backend='functorch', strategy='reverse-mode'
     dudu = torch.ones_like(ux, device=ux.device)
     DQu_dudu = torch.einsum('lkobwhi, bwhi -> blkoi', dQdu, dudu)
     dQdx_diag = DQu_dudx
+
+    # dQdx_diag = dQdu_diag_test * dudx.unsqueeze(-2)
     dQdu_diag = DQu_dudu
 
     # assert torch.allclose(dQdu_dudx_diag, dQdx_diag)
@@ -379,6 +381,43 @@ def equiv_crit_fast(Q, u, v_coeff_fn, x):
     return dQvu - vQu, dQvu, -vQu
 
 
+def plot_g(u, gu, Qgu, Qu, gQu, batch_dim=True, title=''):
+
+    if batch_dim:
+        u = u[0]
+        Qu = Qu[0]
+        gQu = gQu[0]
+        Qgu = Qgu[0]
+        gu = gu[0]
+
+    plt.figure(figsize=(6, 12))
+    plt.suptitle(title, fontsize=16)
+    plt.subplot(3, 2, 1)
+    plt.title('u0')
+    plt.imshow(u.squeeze(-1).detach().cpu().numpy(), origin='lower')
+    plt.colorbar()
+    plt.subplot(3, 2, 2)
+    plt.title('Qu')
+    plt.imshow(Qu.squeeze(-1).detach().cpu().numpy(), origin='lower')
+    plt.colorbar()
+    plt.subplot(3, 2, 3)
+    plt.title('gu')
+    plt.imshow(gu.squeeze(-1).detach().cpu().numpy(),  origin='lower')
+    plt.colorbar()
+    plt.subplot(3, 2, 4)
+    plt.title('Qgu')
+    plt.imshow(Qgu.squeeze(-1).detach().cpu().numpy(),  origin='lower')
+    plt.colorbar()
+    plt.subplot(3, 2, 5)
+    plt.title('Qu')
+    plt.imshow(Qu.squeeze(-1).detach().cpu().numpy(),  origin='lower')
+    plt.colorbar()
+    plt.subplot(3, 2, 6)
+    plt.title('gQu')
+    plt.imshow(gQu.squeeze(-1).detach().cpu().numpy(),  origin='lower')
+    plt.colorbar()
+    plt.show()
+
 
 def plot(e, mvQu, dQvu, ux, Qux, batch_dim=True, eps=0.2):
     gQu = Qux - eps * mvQu
@@ -425,7 +464,31 @@ def plot(e, mvQu, dQvu, ux, Qux, batch_dim=True, eps=0.2):
     plt.show()
 
 
-def run_2d_test(n=100, batch_size=1, strategy='fast'):
+def ring(x, last_dim_scalar=False):
+    center = [0, 1]
+    r = (x[..., 0] - center[0]) ** 2 + (x[..., 1] - center[1]) ** 2
+    scale = .6
+    out = torch.exp(-(r - 3) ** 2 / scale).unsqueeze(-1)
+    if last_dim_scalar:
+        out = out.squeeze(-1)
+    return out
+
+def lines(x, last_dim_scalar=False):
+    r = x[..., 1] ** 2
+    scale = .6
+    lines = torch.exp(-(r - 3) ** 2 / scale).unsqueeze(-1)
+    # mask = torch.ones_like(lines)
+    # mask[torch.abs(x[..., 0]) > 1] = 0
+    # mask[torch.abs(x[..., 1]) > 2] = 0
+    # compact_lines = mask * lines
+    # return compact_lines
+    if last_dim_scalar:
+        lines = lines.squeeze(-1)
+
+    return lines
+
+
+def run_2d_test(v_coeff_fn=v_translation, n=100, batch_size=1, strategy='fast', do_plot=False):
     equiv_crit = equiv_crit_fast if strategy == 'fast' else equiv_crit_full_jac
     batch_dim = True
     # method_to_compute_dudx =  'finite_differences_on_grid'
@@ -440,30 +503,7 @@ def run_2d_test(n=100, batch_size=1, strategy='fast'):
     x_grid, y_grid = torch.meshgrid(x_, y_)
     x = torch.stack([y_grid, x_grid], -1).to(device)
 
-    def ring(x, last_dim_scalar=False):
-        center = [0, 1]
-        r = (x[..., 0] - center[0]) ** 2 + (x[..., 1] - center[1]) ** 2
-        scale = .6
-        out = torch.exp(-(r - 3) ** 2 / scale).unsqueeze(-1)
-        if last_dim_scalar:
-            out = out.squeeze(-1)
-        return out
-
-    def lines(x, last_dim_scalar=False):
-        r = x[..., 1] ** 2
-        scale = .6
-        lines = torch.exp(-(r - 3) ** 2 / scale).unsqueeze(-1)
-        # mask = torch.ones_like(lines)
-        # mask[torch.abs(x[..., 0]) > 1] = 0
-        # mask[torch.abs(x[..., 1]) > 2] = 0
-        # compact_lines = mask * lines
-        # return compact_lines
-        if last_dim_scalar:
-            lines = lines.squeeze(-1)
-
-        return lines
-
-    u0 = partial(lines, last_dim_scalar=last_dim_scalar)
+    u0 = partial(ring, last_dim_scalar=last_dim_scalar)
 
     # center = [0, 0]
     # r = (x[..., 0] - center[0]) ** 2 + (x[..., 1] - center[1]) ** 2
@@ -479,7 +519,9 @@ def run_2d_test(n=100, batch_size=1, strategy='fast'):
     # gauss_filter = conv_2d_filter_given(channels=1, last_dim_scalar=last_dim_scalar, filter="non-symmetric")
     gauss_filter = conv_2d_filter_given(channels=1,
                                         last_dim_scalar=last_dim_scalar,
-                                        filter="gaussian")
+                                        filter="non-symmetric",
+                                        # filter="gaussian",
+    )
     u0x = u0(x)
 
 
@@ -552,7 +594,7 @@ def run_2d_test(n=100, batch_size=1, strategy='fast'):
     t0 = time()
     e, dQvu, mvQu = equiv_crit(gauss_filter, u0,
                                     # v_rotation,
-                                    partial(v_translation, coords_to_translate='u'),
+                                    v_coeff_fn,
                                     x,
                                     # backend=backend,
                                     # strategy=strategy,
@@ -560,29 +602,29 @@ def run_2d_test(n=100, batch_size=1, strategy='fast'):
     t_f = time() - t0
     # plot(e, mvQu, dQvu, u0x, Qu0x, batch_dim=batch_dim, eps=0.2)
     print(f' time: {t_f} seconds')
-    return t_f
+    if do_plot:
+        plot(e, mvQu, dQvu, u0x, Qu0x, batch_dim=batch_dim, eps=0.5)
 
-if __name__ == '__main__':
-    # strategy = 'full'
-    strategy = 'fast'
-    if strategy == 'full':
-        strategy_str = 'Full Jacobian'
-    elif strategy == 'fast':
-        strategy_str = 'Fast JVP'
+    return (e, dQvu, mvQu), t_f
 
 
+def profile_varying_batchsize(v_coeff_fn, strategy):
     n = 64
-    batch_sizes = [1, 2, 4, 8, 16, 32, 64, 128]
+    batch_sizes = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
     times = []
     for batch_size in batch_sizes:
         print(f'batch size: {batch_size}')
         try:
-            etime = run_2d_test(n, batch_size=batch_size, strategy=strategy)
+            etime = run_2d_test(v_coeff_fn, n, batch_size=batch_size, strategy=strategy)
             times.append(etime)
         except:
             print('Out of mem /!\ ')
             times.append(np.nan)
     times, batch_sizes = np.array(times), np.array(batch_sizes)
+    if strategy == 'full':
+        strategy_str = 'Full Jacobian'
+    elif strategy == 'fast':
+        strategy_str = 'Fast JVP'
     plt.title(f'Computational time of Equiv Criteria with {strategy_str}, grid: {n}²')
     plt.ylabel('seconds')
     plt.xlabel('batch size')
@@ -594,18 +636,24 @@ if __name__ == '__main__':
     plt.legend()
     plt.show()
 
+
+def profile_varying_gridsize(v_coeff_fn, strategy):
     ns = [32, 64, 128, 256, 512, 1024, 2048]
     batch_size = 1
     times = []
     for n in ns:
         print(f'n: {n}')
         try:
-            etime = run_2d_test(n, batch_size=batch_size, strategy=strategy)
+            etime = run_2d_test(v_coeff_fn, n, batch_size=batch_size, strategy=strategy)
             times.append(etime)
         except:
             print('Out of mem /!\ ')
             times.append(np.nan)
     times, ns = np.array(times), np.array(ns)
+    if strategy == 'full':
+        strategy_str = 'Full Jacobian'
+    elif strategy == 'fast':
+        strategy_str = 'Fast JVP'
     plt.title(f'Computational time of Equiv Criteria with {strategy_str}, batch: {batch_size}')
     plt.ylabel('seconds')
     plt.xlabel('n²')
@@ -617,3 +665,28 @@ if __name__ == '__main__':
     plt.xticks(ticks=ns2, labels=[f'{n}²' for n in ns])
     plt.legend()
     plt.show()
+
+if __name__ == '__main__':
+    # strategy = 'full'
+    strategy = 'fast'
+    batch_size = 1
+    n = 80
+    # v_coeff_fn = partial(v_translation, coords_to_translate='u')
+    # profile_varying_batchsize(v_coeff_fn, strategy)
+    # profile_varying_gridsize(v_coeff_fn, strategy)
+    v_coeff_fn = partial(v_translation, coords_to_translate=[0])
+    # v_coeff_fn = v_rotation
+    # (e, dQvu, mvQu), t_f = run_2d_test(
+    #     v_coeff_fn, n=n, batch_size=batch_size, strategy='full', do_plot=True
+    # )
+
+    (e_fast, dQvu_fast, mvQu_fast), t_f_fast = run_2d_test(
+        v_coeff_fn, n=n, batch_size=batch_size, strategy='fast', do_plot=True
+    )
+
+    # print('allclose(e, e_fast)', torch.allclose(e, e_fast))
+    # print('max(abs(e - e_fast))', (e - e_fast).abs().max().item())
+
+
+
+

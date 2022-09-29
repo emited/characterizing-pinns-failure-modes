@@ -30,7 +30,7 @@ def conv_2d_filter_given(channels=1, batch_dim=True, last_dim_scalar=False, filt
 
     # channels = ux.shape[-1]
     # Set these to whatever you want for your gaussian filter
-    kernel_size = 31
+    kernel_size = 51
     sigma = 5
 
     # Create a x, y coordinate grid of shape (kernel_size, kernel_size, 2)
@@ -52,7 +52,6 @@ def conv_2d_filter_given(channels=1, batch_dim=True, last_dim_scalar=False, filt
                       )
     if filter == 'non-symmetric':
         where = (xy_grid - mean)[..., 0] > 0
-        new_variance = variance
         new_xy_grid = xy_grid
         # new_xy_grid[..., 0] = xy_grid[..., 0] * 2
         new_variance = torch.ones(xy_grid.shape[-1], device=xy_grid.device) * variance
@@ -65,11 +64,11 @@ def conv_2d_filter_given(channels=1, batch_dim=True, last_dim_scalar=False, filt
         gaussian_kernel[where] = new_kernel[where]
         # gaussian_kernel = new_kernel
 
-        # # plot as testing
-        # import matplotlib.pyplot as plt
-        # plt.imshow(gaussian_kernel.detach().cpu().numpy(), origin='lower')
-        # plt.colorbar()
-        # plt.show()
+        # plot as testing
+        import matplotlib.pyplot as plt
+        plt.imshow(gaussian_kernel.detach().cpu().numpy(), origin='lower')
+        plt.colorbar()
+        plt.show()
 
     # Make sure sum of values in gaussian kernel equals 1.
     gaussian_kernel = gaussian_kernel / torch.sum(gaussian_kernel)
@@ -185,7 +184,7 @@ def v_translation(x, ux=None, coords_to_translate='all'):
         v = torch.zeros_like(x, device=x.device)
     if isinstance(coords_to_translate, (list, tuple)):
         for coord in coords_to_translate:
-            v[coord] = 1
+            v[..., coord] = 1
     if ux is not None:
         if coords_to_translate in ['all', 'u']:
             v_u = torch.ones_like(ux, device=ux.device)
@@ -213,11 +212,12 @@ def v_rotation(x, ux=None):
 
 
 def v_galilean_boost(x, ux):
+    # x: (t, x)
     """Galilean boost of the heat equation"""
-    x, t = x[..., [0]], x[..., [1]]
+    t, x = x[..., [0]], x[..., [1]]
     vks = [
-        2 * t * torch.ones_like(x, device=x.device),
         torch.zeros_like(t),
+        2 * t * torch.ones_like(x, device=x.device),
         - x * torch.ones_like(ux, device=x.device)
     ]
     return torch.cat(vks, -1)
