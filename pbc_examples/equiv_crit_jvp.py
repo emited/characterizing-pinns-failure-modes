@@ -298,7 +298,7 @@ def equiv_crit_full_jac(Q, u, v, x, backend='functorch', strategy='reverse-mode'
     vQ = vQ.unsqueeze(-2)
     vQu = torch.einsum('...i,...i->...', dQdxu, vQ)
 
-    return dQvu - vQu, dQvu, -vQu
+    return dQvu - vQu, dQvu, -vQu, Qux
 
 
 
@@ -378,7 +378,7 @@ def equiv_crit_fast(Q, u, v_coeff_fn, x):
     Quxx, DQu_vux = DQu_vux_fn(Q_i, (ux,), (vux,))
     dQvu = DQu_vux
 
-    return dQvu - vQu, dQvu, -vQu
+    return dQvu - vQu, dQvu, -vQu, Qux
 
 
 def plot_g(u, gu, Qgu, Qu, gQu, batch_dim=True, title=''):
@@ -419,7 +419,7 @@ def plot_g(u, gu, Qgu, Qu, gQu, batch_dim=True, title=''):
     plt.show()
 
 
-def plot(e, mvQu, dQvu, ux, Qux, batch_dim=True, eps=0.2):
+def plot(e, mvQu, dQvu, ux, Qux, Qux_target=None, batch_dim=True, eps=0.2):
     gQu = Qux - eps * mvQu
     Qgu = Qux + eps * dQvu
 
@@ -431,6 +431,8 @@ def plot(e, mvQu, dQvu, ux, Qux, batch_dim=True, eps=0.2):
         mvQu = mvQu[0]
         dQvu = dQvu[0]
         e = e[0]
+        if Qux_target is not None:
+            Qux_target = Qux_target[0]
 
     plt.figure(figsize=(6, 12))
     plt.subplot(4, 2, 1)
@@ -461,6 +463,11 @@ def plot(e, mvQu, dQvu, ux, Qux, batch_dim=True, eps=0.2):
     plt.title('e')
     plt.imshow(e.squeeze(-1).detach().cpu().numpy(), origin='lower')
     plt.colorbar()
+    if Qux_target is not None:
+        plt.subplot(4, 2, 8)
+        plt.title('Qu_target')
+        plt.imshow(Qux_target.squeeze(-1).detach().cpu().numpy(), origin='lower')
+        plt.colorbar()
     plt.show()
 
 

@@ -222,6 +222,16 @@ def v_galilean_boost(x, ux):
     ]
     return torch.cat(vks, -1)
 
+def v_galilean_boost_kdv(x, ux):
+    # x: (t, x)
+    """Galilean boost of the KDV equation"""
+    t, x = x[..., [0]], x[..., [1]]
+    vks = [
+        torch.zeros_like(t),
+        t * torch.ones_like(x, device=x.device),
+        torch.ones_like(ux, device=x.device)
+    ]
+    return torch.cat(vks, -1)
 
 # TODO: implement infinite dimensional subalgebras
 
